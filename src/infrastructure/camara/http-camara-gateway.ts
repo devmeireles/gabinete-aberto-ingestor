@@ -99,13 +99,13 @@ export class HttpCamaraGateway
     const response: CamaraResponse<DespesaDto[]> = await this.http.getJson(
       `deputados/${query.idDeputado}/despesas`,
       {
+        idLegislatura: query.idLegislatura,
         ano: query.ano,
         mes: query.mes,
         pagina: query.pagina,
         itens: PAGE_SIZE,
-        // Ordem estável: sem ela, a paginação pode repetir/pular itens.
-        ordem: "ASC",
-        ordenarPor: "codDocumento",
+        ordem: query.ordem ?? "DESC",
+        ordenarPor: "ano",
       },
     );
     return this.toPage(response, query.pagina);

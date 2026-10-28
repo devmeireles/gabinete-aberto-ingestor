@@ -1,6 +1,7 @@
 import {
   bigint,
   bigserial,
+  boolean,
   char,
   check,
   date,
@@ -8,6 +9,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
   primaryKey,
   text,
@@ -202,6 +204,163 @@ export const deputadoPartidoVigencias = pgTable(
     check(
       "deputado_partido_vigencias_data_check",
       sql`${t.dataFim} IS NULL OR ${t.dataInicio} IS NULL OR ${t.dataFim} >= ${t.dataInicio}`,
+    ),
+  ],
+);
+
+export const tiposDespesa = pgTable(
+  "tipos_despesa",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    nome: text("nome").notNull(),
+  },
+  (t) => [uniqueIndex("tipos_despesa_nome_uq").on(t.nome)],
+);
+
+export const fornecedores = pgTable(
+  "fornecedores",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    nome: text("nome").notNull(),
+    cnpjCpf: text("cnpj_cpf").notNull(),
+  },
+  (t) => [
+    uniqueIndex("fornecedores_nome_cnpj_cpf_uq").on(t.nome, t.cnpjCpf),
+    index("fornecedores_cnpj_cpf_idx").on(t.cnpjCpf),
+  ],
+);
+
+export const despesas = pgTable(
+  "despesas",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    deputadoId: integer("deputado_id").notNull(),
+    legislaturaId: integer("legislatura_id").notNull(),
+    ano: integer("ano").notNull(),
+    mes: integer("mes").notNull(),
+    tipoDespesaId: bigint("tipo_despesa_id", { mode: "number" })
+      .notNull()
+      .references(() => tiposDespesa.id),
+    codDocumento: text("cod_documento").notNull(),
+    tipoDocumento: text("tipo_documento").notNull(),
+    codTipoDocumento: integer("cod_tipo_documento").notNull(),
+    dataDocumento: timestamp("data_documento", {
+      withTimezone: false,
+      mode: "string",
+    }),
+    numDocumento: text("num_documento").notNull(),
+    parcela: integer("parcela").notNull(),
+    numRessarcimento: text("num_ressarcimento").notNull(),
+    codLote: integer("cod_lote").notNull(),
+    fornecedorId: bigint("fornecedor_id", { mode: "number" })
+      .notNull()
+      .references(() => fornecedores.id),
+    valorDocumento: numeric("valor_documento", {
+      precision: 14,
+      scale: 2,
+      mode: "number",
+    }).notNull(),
+    valorGlosa: numeric("valor_glosa", {
+      precision: 14,
+      scale: 2,
+      mode: "number",
+    }).notNull(),
+    valorLiquido: numeric("valor_liquido", {
+      precision: 14,
+      scale: 2,
+      mode: "number",
+    }).notNull(),
+    urlDocumento: text("url_documento"),
+    passageiro: text("passageiro"),
+    trecho: text("trecho"),
+    bilheteMatchAmbiguo: boolean("bilhete_match_ambiguo")
+      .notNull()
+      .default(false),
+    rowHash: char("row_hash", { length: 64 }).notNull(),
+    sourcePayloadId: bigint("source_payload_id", { mode: "number" }).references(
+      () => rawPayloads.id,
+    ),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    foreignKey({
+      name: "despesas_deputado_legislatura_fk",
+      columns: [t.deputadoId, t.legislaturaId],
+      foreignColumns: [
+        deputadoLegislaturas.deputadoId,
+        deputadoLegislaturas.legislaturaId,
+      ],
+    }),
+    uniqueIndex("despesas_natural_key_uq").on(
+      t.deputadoId,
+      t.legislaturaId,
+      t.ano,
+      t.mes,
+      t.codDocumento,
+      t.codLote,
+      t.parcela,
+    ),
+    index("despesas_legislatura_periodo_idx").on(t.legislaturaId, t.ano, t.mes),
+    index("despesas_tipo_despesa_idx").on(t.tipoDespesaId),
+    index("despesas_fornecedor_idx").on(t.fornecedorId),
+  ],
+);
+
+export const bilhetesAereosCsv = pgTable(
+  "bilhetes_aereos_csv",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    deputadoId: integer("deputado_id").notNull(),
+    legislaturaId: integer("legislatura_id").notNull(),
+    ano: integer("ano").notNull(),
+    mes: integer("mes").notNull(),
+    tipoDespesa: text("tipo_despesa").notNull(),
+    codTipoDocumento: integer("cod_tipo_documento").notNull(),
+    codDocumento: text("cod_documento").notNull(),
+    dataDocumento: timestamp("data_documento", {
+      withTimezone: false,
+      mode: "string",
+    }).notNull(),
+    numDocumento: text("num_documento").notNull(),
+    parcela: integer("parcela").notNull(),
+    codLote: integer("cod_lote").notNull(),
+    cnpjCpfFornecedor: text("cnpj_cpf_fornecedor").notNull(),
+    valorDocumento: numeric("valor_documento", {
+      precision: 14,
+      scale: 2,
+      mode: "number",
+    }).notNull(),
+    passageiro: text("passageiro").notNull(),
+    trecho: text("trecho").notNull(),
+    arquivo: text("arquivo").notNull(),
+    linha: integer("linha").notNull(),
+  },
+  (t) => [
+    uniqueIndex("bilhetes_aereos_csv_identity_uq").on(
+      t.deputadoId,
+      t.legislaturaId,
+      t.ano,
+      t.mes,
+      t.codDocumento,
+      t.codTipoDocumento,
+      t.dataDocumento,
+      t.numDocumento,
+      t.parcela,
+      t.codLote,
+      t.valorDocumento,
+      t.passageiro,
+      t.trecho,
+    ),
+    index("bilhetes_aereos_csv_match_idx").on(
+      t.deputadoId,
+      t.legislaturaId,
+      t.ano,
+      t.mes,
+      t.codDocumento,
+      t.dataDocumento,
+      t.numDocumento,
     ),
   ],
 );

@@ -22,10 +22,11 @@ export interface DespesaDto {
 
 export interface ListDespesasQuery {
   readonly idDeputado: number;
-  /** Obrigatórios: sem filtro de tempo a API devolve só os últimos 6 meses. */
+  readonly idLegislatura: number;
   readonly ano: number;
   readonly mes: number;
   readonly pagina: number;
+  readonly ordem?: "ASC" | "DESC";
 }
 
 export interface DespesaGateway {

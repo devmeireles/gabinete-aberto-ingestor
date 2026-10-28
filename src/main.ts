@@ -1,5 +1,6 @@
 import type { Server } from "node:http";
 import { SyncLegislaturas } from "./application/use-cases/sync-legislaturas";
+import { SyncDespesas } from "./application/use-cases/sync-despesas";
 import { loadEnv, type Env } from "./config/env";
 import {
   CamaraHttpClient,
@@ -13,8 +14,10 @@ import {
 } from "@/infrastructure/persistence/client";
 import { DrizzleLegislaturaRepository } from "@/infrastructure/persistence/drizzle-legislatura-repository";
 import { DrizzleRawPayloadStore } from "@/infrastructure/persistence/drizzle-raw-payload-store";
+import { DrizzleDespesaRepository } from "@/infrastructure/persistence/drizzle-despesa-repository";
 import { createApp } from "@/infrastructure/http/server";
 import { createSyncLegislaturasFunction } from "@/infrastructure/inngest/functions/sync-legislaturas.function";
+import { createSyncDespesasFunction } from "@/infrastructure/inngest/functions/sync-despesas.function";
 
 /**
  * COMPOSITION ROOT: o único lugar que conhece todas as implementações
@@ -38,9 +41,15 @@ function main(): void {
     new DrizzleRawPayloadStore(database.db),
     new DrizzleLegislaturaRepository(database.db),
   );
+  const syncDespesas: SyncDespesas = new SyncDespesas(
+    gateway,
+    new DrizzleRawPayloadStore(database.db),
+    new DrizzleDespesaRepository(database.db),
+  );
 
   const server: Server = createApp([
     createSyncLegislaturasFunction(syncLegislaturas),
+    createSyncDespesasFunction(syncDespesas),
   ]).listen(env.port, () => {
     console.log(JSON.stringify({ msg: "camara-etl ouvindo", port: env.port }));
   });

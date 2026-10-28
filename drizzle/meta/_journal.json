@@ -22,6 +22,13 @@
       "when": 1793201766826,
       "tag": "0002_deputado_partido_vigencias",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793203541396,
+      "tag": "0003_expenses_and_air_ticket_enrichment",
+      "breakpoints": true
     }
   ]
 }
