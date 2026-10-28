@@ -38,6 +38,9 @@ npm run db:migrate
 npm run dev
 ```
 
+Antes de iniciar uma versão com registro de execuções, aplique todas as
+migrations pendentes, incluindo a criação de `crawler_runs`.
+
 O serviço expõe `GET /healthz` e o endpoint do Inngest em `/api/inngest`.
 Registre esse endpoint no Inngest Cloud ou conecte o Inngest Dev Server ao
 endereço local. Para desenvolvimento local, por exemplo:
@@ -155,6 +158,25 @@ Os payloads brutos são mantidos para auditoria e reprocessamento. Os upserts
 normalizados são idempotentes; uma execução interrompida pode ser repetida.
 O Inngest registra as etapas e faz retry das falhas sem marcar páginas
 incompletas como concluídas.
+
+Toda execução de função Inngest é registrada em `crawler_runs` antes de
+começar o trabalho e finalizada com estado `completed` ou `failed`, horário,
+resumo (quando concluída) e mensagem de erro (quando falha). O `run_id` do
+Inngest identifica a execução; tentativas de retry atualizam o mesmo registro
+e incrementam `attempt`, preservando uma linha por run. Se o registro de início
+ou de término falhar no PostgreSQL, a função falha para que o Inngest faça
+retry, em vez de executar sem histórico persistente.
+
+Esse registro é para execuções Inngest; comandos CLI dry-run não criam linhas
+em `crawler_runs`. Para consultar o histórico mais recente:
+
+```sql
+SELECT function_id, run_id, event_name, status, attempt,
+       started_at, finished_at, summary, error
+FROM crawler_runs
+ORDER BY started_at DESC
+LIMIT 50;
+```
 
 ## Desenvolvimento
 

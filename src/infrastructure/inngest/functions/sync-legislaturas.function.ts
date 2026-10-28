@@ -6,6 +6,8 @@ import {
   CAMARA_API_CONCURRENCY,
   inngest,
 } from "@/infrastructure/inngest/client";
+import type { CrawlerRunRepository } from "@/application/ports/crawler-run-repository";
+import { runTrackedCrawler } from "@/infrastructure/inngest/tracked-run";
 
 /** Trava de segurança: se hasNext nunca virar false, não rodamos para sempre. */
 const MAX_PAGES: number = 50;
@@ -27,7 +29,10 @@ export interface SyncLegislaturasSummary {
  * - singleton "skip": se o run anterior ainda está ativo, o novo é ignorado
  *   (sem sobreposição de cargas concorrentes).
  */
-export function createSyncLegislaturasFunction(useCase: SyncLegislaturas) {
+export function createSyncLegislaturasFunction(
+  useCase: SyncLegislaturas,
+  runRepository: CrawlerRunRepository,
+) {
   return inngest.createFunction(
     {
       id: "sync-legislaturas",
@@ -36,32 +41,38 @@ export function createSyncLegislaturasFunction(useCase: SyncLegislaturas) {
       concurrency: CAMARA_API_CONCURRENCY,
       singleton: { mode: "skip" },
     },
-    async ({ step }): Promise<SyncLegislaturasSummary> => {
-      let pagina: number = 1;
-      let fetched: number = 0;
-      let written: number = 0;
-      let unchanged: number = 0;
+    async ({ step, runId, attempt, event }): Promise<SyncLegislaturasSummary> =>
+      runTrackedCrawler(
+        runRepository,
+        "sync-legislaturas",
+        { runId, attempt, eventName: event.name },
+        async (): Promise<SyncLegislaturasSummary> => {
+          let pagina: number = 1;
+          let fetched: number = 0;
+          let written: number = 0;
+          let unchanged: number = 0;
 
-      for (;;) {
-        const currentPage: number = pagina; // valor fixo por iteração, seguro para a closure
-        const result: SyncPageResult = await step.run(
-          `legislaturas-pagina-${currentPage}`,
-          () => useCase.executePage(currentPage),
-        );
-        fetched += result.fetched;
-        written += result.written;
-        unchanged += result.unchanged;
+          for (;;) {
+            const currentPage: number = pagina; // valor fixo por iteração, seguro para a closure
+            const result: SyncPageResult = await step.run(
+              `legislaturas-pagina-${currentPage}`,
+              () => useCase.executePage(currentPage),
+            );
+            fetched += result.fetched;
+            written += result.written;
+            unchanged += result.unchanged;
 
-        if (!result.hasNext) break;
-        if (pagina >= MAX_PAGES) {
-          throw new Error(
-            `sync-legislaturas passou de ${MAX_PAGES} páginas: abortando`,
-          );
-        }
-        pagina++;
-      }
+            if (!result.hasNext) break;
+            if (pagina >= MAX_PAGES) {
+              throw new Error(
+                `sync-legislaturas passou de ${MAX_PAGES} páginas: abortando`,
+              );
+            }
+            pagina++;
+          }
 
-      return { pages: pagina, fetched, written, unchanged };
-    },
+          return { pages: pagina, fetched, written, unchanged };
+        },
+      ),
   );
 }

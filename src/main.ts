@@ -15,6 +15,7 @@ import {
 import { DrizzleLegislaturaRepository } from "@/infrastructure/persistence/drizzle-legislatura-repository";
 import { DrizzleRawPayloadStore } from "@/infrastructure/persistence/drizzle-raw-payload-store";
 import { DrizzleDespesaRepository } from "@/infrastructure/persistence/drizzle-despesa-repository";
+import { DrizzleCrawlerRunRepository } from "@/infrastructure/persistence/drizzle-crawler-run-repository";
 import { createApp } from "@/infrastructure/http/server";
 import { createSyncLegislaturasFunction } from "@/infrastructure/inngest/functions/sync-legislaturas.function";
 import { createSyncDespesasFunction } from "@/infrastructure/inngest/functions/sync-despesas.function";
@@ -46,10 +47,12 @@ function main(): void {
     new DrizzleRawPayloadStore(database.db),
     new DrizzleDespesaRepository(database.db),
   );
+  const crawlerRunRepository: DrizzleCrawlerRunRepository =
+    new DrizzleCrawlerRunRepository(database.db);
 
   const server: Server = createApp([
-    createSyncLegislaturasFunction(syncLegislaturas),
-    createSyncDespesasFunction(syncDespesas),
+    createSyncLegislaturasFunction(syncLegislaturas, crawlerRunRepository),
+    createSyncDespesasFunction(syncDespesas, crawlerRunRepository),
   ]).listen(env.port, () => {
     console.log(JSON.stringify({ msg: "camara-etl ouvindo", port: env.port }));
   });

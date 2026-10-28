@@ -49,6 +49,33 @@ export const rawPayloads = pgTable(
   ],
 );
 
+export const crawlerRuns = pgTable(
+  "crawler_runs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    functionId: text("function_id").notNull(),
+    runId: text("run_id").notNull(),
+    eventName: text("event_name").notNull(),
+    attempt: integer("attempt").notNull(),
+    status: text("status").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    summary: jsonb("summary").$type<Record<string, unknown>>(),
+    error: text("error"),
+  },
+  (t) => [
+    uniqueIndex("crawler_runs_function_run_uq").on(t.functionId, t.runId),
+    index("crawler_runs_status_started_idx").on(t.status, t.startedAt),
+    check(
+      "crawler_runs_status_check",
+      sql`${t.status} IN ('running', 'completed', 'failed')`,
+    ),
+    check("crawler_runs_attempt_check", sql`${t.attempt} > 0`),
+  ],
+);
+
 /**
  * CAMADA NORMALIZADA
  *
