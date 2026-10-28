@@ -1,3 +1,4 @@
+import "dotenv/config";
 import type { Server } from "node:http";
 import { SyncLegislaturas } from "./application/use-cases/sync-legislaturas";
 import { SyncPartidos } from "./application/use-cases/sync-partidos";

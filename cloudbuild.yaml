@@ -73,7 +73,7 @@ steps:
       - --set-env-vars
       - NODE_ENV=production,CAMARA_MAX_CONCURRENT=2,CAMARA_MIN_INTERVAL_MS=250
       - --set-secrets
-      - DATABASE_URL=DATABASE_URL:latest,INNGEST_SIGNING_KEY=INNGEST_SIGNING_KEY:latest
+      - DATABASE_URL=DATABASE_URL:latest,INNGEST_SIGNING_KEY=INNGEST_SIGNING_KEY:latest,INNGEST_EVENT_KEY=INNGEST_EVENT_KEY:latest
       - --quiet
 
   # Inngest must refresh its registered function list after the worker deploy.

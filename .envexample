@@ -8,7 +8,7 @@ DATABASE_URL=postgresql://USUARIO:SENHA@ep-xxxx-pooler.sa-east-1.aws.neon.tech/n
 
 DATABASE_URL_DIRECT=postgresql://USUARIO:SENHA@ep-xxxx.sa-east-1.aws.neon.tech/neondb?sslmode=require
 
-# Inngest Cloud (obrigatória em produção; lidas pelo próprio SDK).
+# Inngest Cloud (obrigatórias em produção; EVENT_KEY publica eventos).
 
 INNGEST_SIGNING_KEY=
 INNGEST_EVENT_KEY=

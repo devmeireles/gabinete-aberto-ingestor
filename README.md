@@ -28,8 +28,8 @@ banco exigir conexão direta. Não versione o `.env`.
 | `PORT`                   | Não                   | Porta HTTP do serviço; padrão `8080`.                                           |
 | `CAMARA_MAX_CONCURRENT`  | Não                   | Requisições simultâneas à API por instância; padrão `2`.                        |
 | `CAMARA_MIN_INTERVAL_MS` | Não                   | Intervalo mínimo entre requisições; padrão `250` ms.                            |
-| `INNGEST_SIGNING_KEY`    | Produção              | Chave de assinatura do Inngest.                                                 |
-| `INNGEST_EVENT_KEY`      | Conforme configuração | Chave para envio de eventos do Inngest.                                         |
+| `INNGEST_SIGNING_KEY`    | Produção              | Chave de assinatura do Inngest para validar chamadas recebidas.                 |
+| `INNGEST_EVENT_KEY`      | Produção              | Chave do Inngest necessária para publicar eventos entre as etapas dos seeds.     |
 
 Crie/atualize o schema do banco e inicie o serviço:
 
@@ -37,6 +37,12 @@ Crie/atualize o schema do banco e inicie o serviço:
 npm run db:migrate
 npm run dev
 ```
+
+Em produção, crie o secret `INNGEST_EVENT_KEY` no Secret Manager com a Event
+Key do ambiente Inngest correspondente e conceda ao service account do Cloud
+Run o papel `roles/secretmanager.secretAccessor`. O Cloud Build configura esse
+secret na revisão do serviço; ele é usado pelo worker para publicar os eventos
+que encadeiam os seeds de partidos e deputados.
 
 Antes de iniciar uma versão com registro de execuções, aplique todas as
 migrations pendentes, incluindo a criação de `crawler_runs`.

@@ -7,8 +7,19 @@ import {
   parseSeedPartidoId,
   selectPartidoIds,
 } from "@/infrastructure/inngest/functions/seed-perfis-partidos.function";
+import { loadEnv } from "@/config/env";
 
 describe("party seed payloads and event creation", () => {
+  it("requires the event key in production", () => {
+    expect(() =>
+      loadEnv({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://localhost/app",
+        INNGEST_SIGNING_KEY: "signing-key",
+      }),
+    ).toThrow("Variável de ambiente obrigatória ausente: INNGEST_EVENT_KEY");
+  });
+
   it("requires a positive legislature id", () => {
     expect(parseSeedPartidosLegislaturaId(57)).toBe(57);
     for (const value of [undefined, null, "57", 0, -1, 1.5]) {

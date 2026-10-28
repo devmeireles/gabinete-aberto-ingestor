@@ -39,11 +39,13 @@ function readInt(
  * "faltou a signing key" só quando o Inngest chama o endpoint é pior que o
  * container nem subir (o Cloud Run mostra a revisão como falha).
  *
- * INNGEST_SIGNING_KEY / INNGEST_EVENT_KEY são lidas pelo próprio SDK.
+ * As chaves do Inngest são obrigatórias em produção: a aplicação recebe
+ * chamadas autenticadas e publica eventos entre as etapas dos seeds.
  */
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   if (source["NODE_ENV"] === "production") {
     requireString(source, "INNGEST_SIGNING_KEY");
+    requireString(source, "INNGEST_EVENT_KEY");
   }
   return {
     // O Cloud Run injeta PORT (8080).
