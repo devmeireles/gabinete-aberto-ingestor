@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type {
   DeputadoPageSnapshot,
   DeputadoRepository,
@@ -16,6 +16,14 @@ import {
 
 export class DrizzleDeputadoRepository implements DeputadoRepository {
   constructor(private readonly db: Database) {}
+
+  async listIds(): Promise<readonly number[]> {
+    const rows = await this.db
+      .select({ id: deputados.id })
+      .from(deputados)
+      .orderBy(asc(deputados.id));
+    return rows.map(({ id }) => id);
+  }
 
   async syncPage(snapshot: DeputadoPageSnapshot): Promise<UpsertResult> {
     const { deputados: items, legislaturas: memberships } = snapshot;
@@ -221,9 +229,13 @@ export class DrizzleDeputadoRepository implements DeputadoRepository {
           gabineteEmail: sql`excluded.gabinete_email`,
           rowHash: sql`excluded.row_hash`,
           sourcePayloadId: sql`excluded.source_payload_id`,
-          updatedAt: sql`now()`,
+          updatedAt: sql`CASE
+            WHEN ${deputadoDetalhes.rowHash} IS DISTINCT FROM excluded.row_hash
+              THEN now()
+            ELSE ${deputadoDetalhes.updatedAt}
+          END`,
+          lastFetchedAt: sql`now()`,
         },
-        setWhere: sql`${deputadoDetalhes.rowHash} IS DISTINCT FROM excluded.row_hash`,
       });
   }
 }

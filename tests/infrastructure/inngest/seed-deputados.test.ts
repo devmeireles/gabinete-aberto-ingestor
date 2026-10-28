@@ -3,7 +3,10 @@ import {
   createProfileSeedEvents,
   parseSeedLegislaturaId,
 } from "@/infrastructure/inngest/functions/seed-deputados.function";
-import { parseSeedDeputadoId } from "@/infrastructure/inngest/functions/seed-perfis-deputados.function";
+import {
+  parseSeedDeputadoId,
+  selectDeputadoIds,
+} from "@/infrastructure/inngest/functions/seed-perfis-deputados.function";
 
 describe("deputados seed payload", () => {
   it("accepts a positive integer legislature id", () => {
@@ -11,16 +14,27 @@ describe("deputados seed payload", () => {
   });
 
   describe("deputado profile seed payload", () => {
-    it("accepts a positive deputy id", () => {
+    it("accepts all profiles or one specific deputy profile", () => {
+      expect(parseSeedDeputadoId(undefined)).toBeUndefined();
       expect(parseSeedDeputadoId(218086)).toBe(218086);
     });
 
     it("rejects missing and malformed deputy ids", () => {
-      for (const value of [undefined, null, "218086", 0, -1, 1.5]) {
+      for (const value of [null, "218086", 0, -1, 1.5]) {
         expect(() => parseSeedDeputadoId(value)).toThrow(
           "deputadoId como inteiro positivo",
         );
       }
+    });
+
+    it("selects all registered deputies or only the requested one", () => {
+      expect(selectDeputadoIds(undefined, [100, 101, 102])).toEqual([
+        100, 101, 102,
+      ]);
+      expect(selectDeputadoIds(218086, [])).toEqual([218086]);
+      expect(() => selectDeputadoIds(undefined, [])).toThrow(
+        "Execute camara/deputados.seed",
+      );
     });
   });
 

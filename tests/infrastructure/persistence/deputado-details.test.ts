@@ -10,6 +10,7 @@ describe("deputado details migration", () => {
     await executeMigration(database, "0000_init_raw_and_phase1.sql");
     await executeMigration(database, "0007_deputado_details.sql");
     await executeMigration(database, "0008_deputado_status_snapshot.sql");
+    await executeMigration(database, "0011_deputy_profile_last_fetched.sql");
     await database.exec(`
       INSERT INTO raw_payloads (request_key, content_hash, payload)
       VALUES ('deputados/218086', repeat('a', 64), '{"dados": {}}');
@@ -40,13 +41,13 @@ describe("deputado details migration", () => {
       INSERT INTO deputado_detalhes (
         deputado_id, nome_civil, cpf, redes_sociais, status_legislatura_id,
         status_nome, status_uri, nome_eleitoral, situacao, row_hash,
-        source_payload_id
+        source_payload_id, last_fetched_at
       ) VALUES (
         218086, 'ELIANE DE SOUSA ALVES', '16810770860',
         '["https://instagram.com/deputadafederal_elysantos"]', 57,
         'Ely Santos',
         'https://dadosabertos.camara.leg.br/api/v2/deputados/218086',
-        'Ely Santos', 'Suplência', repeat('d', 64), 1
+        'Ely Santos', 'Suplência', repeat('d', 64), 1, now()
       );
     `);
 
@@ -54,8 +55,9 @@ describe("deputado details migration", () => {
       nome_civil: string;
       status_nome: string;
       redes_sociais: string[];
+      last_fetched_at: string;
     }>(
-      `SELECT nome_civil, status_nome, redes_sociais
+      `SELECT nome_civil, status_nome, redes_sociais, last_fetched_at::text
        FROM deputado_detalhes
        WHERE deputado_id = 218086`,
     );
@@ -65,6 +67,7 @@ describe("deputado details migration", () => {
         nome_civil: "ELIANE DE SOUSA ALVES",
         status_nome: "Ely Santos",
         redes_sociais: ["https://instagram.com/deputadafederal_elysantos"],
+        last_fetched_at: expect.any(String),
       },
     ]);
   });

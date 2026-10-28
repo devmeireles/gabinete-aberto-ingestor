@@ -78,6 +78,13 @@
       "when": 1793219306290,
       "tag": "0010_party_profile_last_fetched",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793219414951,
+      "tag": "0011_deputy_profile_last_fetched",
+      "breakpoints": true
     }
   ]
 }

@@ -112,7 +112,11 @@ function main(): void {
       syncDeputados,
       crawlerRunRepository,
     ),
-    createSeedPerfilDeputadoFunction(enrichDeputado, crawlerRunRepository),
+    createSeedPerfilDeputadoFunction(
+      enrichDeputado,
+      deputadoRepository,
+      crawlerRunRepository,
+    ),
     createSyncDespesasFunction(syncDespesas, crawlerRunRepository),
     createSeedBilhetesAereosFunction(
       importBilhetesAereosCsv,

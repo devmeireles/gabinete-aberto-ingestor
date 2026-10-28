@@ -245,6 +245,9 @@ export const deputadoDetalhes = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    lastFetchedAt: timestamp("last_fetched_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
     index("deputado_detalhes_status_legislatura_idx").on(t.statusLegislaturaId),

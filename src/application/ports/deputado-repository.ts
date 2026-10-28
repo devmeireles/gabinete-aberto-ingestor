@@ -21,6 +21,7 @@ export interface DeputadoPageSnapshot {
 }
 
 export interface DeputadoRepository {
+  listIds(): Promise<readonly number[]>;
   syncPage(snapshot: DeputadoPageSnapshot): Promise<UpsertResult>;
   upsertDetalhe(
     detalhe: DeputadoDetalhe,
