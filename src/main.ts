@@ -4,6 +4,7 @@ import { SyncPartidos } from "./application/use-cases/sync-partidos";
 import { SyncDeputados } from "./application/use-cases/sync-deputados";
 import { PrepareDeputadosPage } from "./application/use-cases/prepare-deputados-page";
 import { EnrichDeputado } from "./application/use-cases/enrich-deputado";
+import { EnrichPartido } from "./application/use-cases/enrich-partido";
 import { SyncDespesas } from "./application/use-cases/sync-despesas";
 import { ImportBilhetesAereosCsv } from "./application/use-cases/import-bilhetes-aereos-csv";
 import { loadEnv, type Env } from "./config/env";
@@ -29,6 +30,8 @@ import { createApp } from "@/infrastructure/http/server";
 import { createSeedLegislaturasFunction } from "@/infrastructure/inngest/functions/seed-legislaturas.function";
 import { createSeedDeputadosFunction } from "@/infrastructure/inngest/functions/seed-deputados.function";
 import { createSeedPerfilDeputadoFunction } from "@/infrastructure/inngest/functions/seed-perfis-deputados.function";
+import { createSeedPartidosFunction } from "@/infrastructure/inngest/functions/seed-partidos.function";
+import { createSeedPerfilPartidoFunction } from "@/infrastructure/inngest/functions/seed-perfis-partidos.function";
 import { createSyncDespesasFunction } from "@/infrastructure/inngest/functions/sync-despesas.function";
 import { createSeedBilhetesAereosFunction } from "@/infrastructure/inngest/functions/seed-bilhetes-aereos.function";
 
@@ -59,10 +62,17 @@ function main(): void {
   const rawPayloadStore: DrizzleRawPayloadStore = new DrizzleRawPayloadStore(
     database.db,
   );
+  const partidoRepository: DrizzlePartidoRepository =
+    new DrizzlePartidoRepository(database.db);
   const syncPartidos: SyncPartidos = new SyncPartidos(
     gateway,
     rawPayloadStore,
-    new DrizzlePartidoRepository(database.db),
+    partidoRepository,
+  );
+  const enrichPartido: EnrichPartido = new EnrichPartido(
+    gateway,
+    rawPayloadStore,
+    partidoRepository,
   );
   const syncDeputados: SyncDeputados = new SyncDeputados(
     new PrepareDeputadosPage(gateway),
@@ -91,6 +101,12 @@ function main(): void {
 
   const server: Server = createApp([
     createSeedLegislaturasFunction(syncLegislaturas, crawlerRunRepository),
+    createSeedPartidosFunction(syncPartidos, crawlerRunRepository),
+    createSeedPerfilPartidoFunction(
+      enrichPartido,
+      partidoRepository,
+      crawlerRunRepository,
+    ),
     createSeedDeputadosFunction(
       syncPartidos,
       syncDeputados,

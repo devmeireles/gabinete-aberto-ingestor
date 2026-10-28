@@ -142,6 +142,47 @@ export const partidoLegislaturas = pgTable(
   (t) => [primaryKey({ columns: [t.partidoId, t.legislaturaId] })],
 );
 
+export const partidoDetalhes = pgTable(
+  "partido_detalhes",
+  {
+    partidoId: integer("partido_id")
+      .primaryKey()
+      .references(() => partidos.id),
+    statusData: text("status_data"),
+    statusLegislaturaId: integer("status_legislatura_id").references(
+      () => legislaturas.id,
+    ),
+    situacao: text("situacao"),
+    totalPosse: integer("total_posse"),
+    totalMembros: integer("total_membros"),
+    uriMembros: text("uri_membros"),
+    liderUri: text("lider_uri"),
+    liderNome: text("lider_nome"),
+    liderSiglaPartido: text("lider_sigla_partido"),
+    liderUriPartido: text("lider_uri_partido"),
+    liderUf: char("lider_uf", { length: 2 }),
+    liderLegislaturaId: integer("lider_legislatura_id"),
+    liderUrlFoto: text("lider_url_foto"),
+    numeroEleitoral: text("numero_eleitoral"),
+    urlLogo: text("url_logo"),
+    urlWebSite: text("url_website"),
+    urlFacebook: text("url_facebook"),
+    rowHash: char("row_hash", { length: 64 }).notNull(),
+    sourcePayloadId: bigint("source_payload_id", { mode: "number" })
+      .notNull()
+      .references(() => rawPayloads.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastFetchedAt: timestamp("last_fetched_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("partido_detalhes_status_legislatura_idx").on(t.statusLegislaturaId),
+  ],
+);
+
 /** Identidade estável do deputado (o que não muda entre legislaturas). */
 export const deputados = pgTable("deputados", {
   id: integer("id").primaryKey(),

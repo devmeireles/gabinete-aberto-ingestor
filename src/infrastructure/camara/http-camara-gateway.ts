@@ -18,6 +18,7 @@ import type {
 } from "@/application/ports/camara-gateway/legislaturas";
 import type {
   ListPartidosQuery,
+  PartidoDetalheDto,
   PartidoDto,
   PartidoGateway,
 } from "@/application/ports/camara-gateway/partidos";
@@ -69,10 +70,25 @@ export class HttpCamaraGateway
         pagina: query.pagina,
         itens: PAGE_SIZE,
         ordem: "ASC",
-        ordenarPor: "id",
+        ordenarPor: "sigla",
       },
     );
     return this.toPage(response, query.pagina);
+  }
+
+  async getPartido(partidoId: number): Promise<{
+    readonly item: PartidoDetalheDto;
+    readonly requestKey: string;
+    readonly rawBody: unknown;
+  }> {
+    const response: CamaraResponse<PartidoDetalheDto> = await this.http.getJson(
+      `partidos/${partidoId}`,
+    );
+    return {
+      item: response.envelope.dados,
+      requestKey: response.requestKey,
+      rawBody: response.envelope,
+    };
   }
 
   async listDeputados(query: ListDeputadosQuery): Promise<Page<DeputadoDto>> {

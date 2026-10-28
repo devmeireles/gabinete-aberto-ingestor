@@ -1,0 +1,1 @@
+ALTER TABLE "partido_detalhes" ADD COLUMN "last_fetched_at" timestamp with time zone DEFAULT now() NOT NULL;

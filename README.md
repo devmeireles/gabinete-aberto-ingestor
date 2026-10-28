@@ -73,23 +73,28 @@ apaga o volume local do PostgreSQL.
    `camara/legislaturas.seed` e dados `{}`. Uma única execução percorre todas
    as páginas da API e faz upsert idempotente. Não é necessário repetir essa
    carga mensalmente.
-2. **Carregue a lista de deputados pelo Inngest.** Envie
+2. **Carregue partidos e seus perfis pelo Inngest.** Envie
+   `camara/partidos.seed` com `{"legislaturaId": 57}`. O seed lista e grava os
+   partidos da legislatura e dispara, separadamente, os eventos para buscar
+   cada detalhe em `/partidos/{id}`. Para repetir o enriquecimento de todos os
+   partidos já cadastrados, envie `camara/partidos.perfil.seed` com dados `{}`.
+3. **Carregue a lista de deputados pelo Inngest.** Envie
    `camara/deputados.seed` com `{"legislaturaId": 57}` (substitua pelo ID
    desejado). A legislatura deve estar carregada. Esse seed sincroniza
    partidos, a lista e o histórico partidário, depois dispara eventos para a
    segunda etapa.
-3. **Enriqueça os perfis em um seed separado.** Para cada deputado recebido,
+4. **Enriqueça os perfis em um seed separado.** Para cada deputado recebido,
    `seed-perfis-deputados` consulta `/deputados/{id}` e grava os dados pessoais
    e o snapshot de `ultimoStatus`. Os payloads brutos das listas, históricos e
    detalhes também são preservados. Também é possível solicitar um perfil
    individual enviando `camara/deputados.perfil.seed` com
    `{"deputadoId": 218086}`.
-4. **Carregue os CSVs oficiais de passagens pelo Inngest.** Envie o evento
+5. **Carregue os CSVs oficiais de passagens pelo Inngest.** Envie o evento
    `camara/bilhetes-aereos.seed` sem dados para importar todos os anos desde
    2008, ou informe `{"ano": 2025}` para carregar somente um ano. Os ZIPs são
    baixados da Câmara, extraídos em streaming e importados sem salvar arquivos
    localmente.
-5. **Sincronize despesas recentes ou faça backfill.** O comando consulta a API
+6. **Sincronize despesas recentes ou faça backfill.** O comando consulta a API
    por deputado, legislatura e mês. A reconciliação com passageiros e trechos
    usa os dados já importados no banco.
 
@@ -174,10 +179,50 @@ despesa mudarem, o bilhete associado é liberado para nova correspondência.
 | Função                  | Disparo                                      | Trabalho                                                                                              |
 | ----------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `seed-legislaturas`     | Evento `camara/legislaturas.seed`            | Percorre todas as páginas e grava as legislaturas.                                                    |
-| `seed-deputados`        | Evento `camara/deputados.seed`               | Com `{"legislaturaId": 57}`, grava partidos, lista e histórico; dispara eventos para seed de perfis.   |
+| `seed-partidos`         | Evento `camara/partidos.seed`                | Com `{"legislaturaId": 57}`, grava a lista e dispara eventos de enriquecimento dos partidos.           |
+| `seed-perfis-partidos`  | Evento `camara/partidos.perfil.seed`         | Sem payload enriquece sequencialmente todos os partidos cadastrados; com `{"partidoId": 37906}`, processa somente um. |
+| `seed-deputados`        | Evento `camara/deputados.seed`               | Com `{"legislaturaId": 57}`, grava lista e histórico; dispara eventos para seed de perfis.             |
 | `seed-perfis-deputados` | Evento `camara/deputados.perfil.seed`        | Recebe `{"deputadoId": 218086}`, consulta `/deputados/{id}` e grava o perfil e o último status.       |
 | `seed-bilhetes-aereos`  | Evento `camara/bilhetes-aereos.seed`         | Sem payload importa de 2008 até o ano corrente; `{"ano": 2025}` importa somente aquele ano.           |
 | `sync-despesas`         | Domingo, às 03h no horário de Brasília       | Atualiza os três meses mais recentes de todos os deputados cadastrados na legislatura vigente.        |
+
+Exemplo de evento para carregar partidos e enfileirar seus perfis:
+
+```json
+{
+  "name": "camara/partidos.seed",
+  "data": {
+    "legislaturaId": 57
+  }
+}
+```
+
+O seed da lista emite um evento de perfil por partido. Para reenriquecer todos
+os partidos já listados na base, envie o evento sem dados:
+
+```json
+{
+  "name": "camara/partidos.perfil.seed",
+  "data": {}
+}
+```
+
+Também é possível solicitar um perfil individual:
+
+```json
+{
+  "name": "camara/partidos.perfil.seed",
+  "data": {
+    "partidoId": 37906
+  }
+}
+```
+
+Os dados complementares da API ficam em `partido_detalhes`, separados da
+identidade de referência em `partidos` e do vínculo temporal em
+`partido_legislaturas`. A coluna `last_fetched_at` registra quando o perfil
+foi consultado pela última vez, inclusive se os dados não mudaram; `updated_at`
+indica quando o conteúdo persistido teve alteração.
 
 Exemplo de evento para carregar lista e enfileirar os seeds de perfil:
 
