@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { Readable } from "node:stream";
 import { ImportBilhetesAereosCsv } from "@/application/use-cases/import-bilhetes-aereos-csv";
 import type { DespesaRepository } from "@/application/ports/despesa-repository";
 import { StreamingBilheteAereoCsvSource } from "@/infrastructure/csv/streaming-bilhete-aereo-csv-source";
@@ -93,5 +94,55 @@ describe("ImportBilhetesAereosCsv", () => {
         trecho: "BSB/CGH",
       },
     });
+  });
+
+  it("imports a decompressed stream without reconciling until requested", async () => {
+    const csv =
+      '"txtDescricao";"indTipoDocumento";"nuDeputadoId";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento";"txtPassageiro";"txtTrecho"\n' +
+      '"PASSAGEM AÉREA - SIGEPA";"0";"218086";"57";"2025";"4";"302323";"2025-04-08T12:00:00";"BFBWSI";"0";"0";"092.962.950/0016-0";"-391.23";"Eliane de Sousa Alves";"BSB/CGH"\n';
+    const batches: BilheteAereoCsv[][] = [];
+    let reconciliations: number = 0;
+    const repository: DespesaRepository = {
+      getActiveLegislaturaId: async () => 57,
+      listDeputadoIds: async () => [218086],
+      upsertMany: async () => ({
+        written: 0,
+        unchanged: 0,
+        enriched: 0,
+        ambiguous: 0,
+      }),
+      importBilhetesCsv: async (items) => {
+        batches.push([...items]);
+        return { imported: items.length, enriched: 0, ambiguous: 0 };
+      },
+      enrichFromBilhetesCsv: async () => {
+        reconciliations++;
+        return { enriched: 1, ambiguous: 0 };
+      },
+    };
+
+    const importer = new ImportBilhetesAereosCsv(
+      new StreamingBilheteAereoCsvSource(),
+      repository,
+    );
+    const result = await importer.importStream(
+      "Ano-2025.csv",
+      Readable.from([Buffer.from(csv)]),
+    );
+
+    expect(result).toEqual({
+      scanned: 1,
+      candidates: 1,
+      imported: 1,
+      enriched: 0,
+      ambiguous: 0,
+    });
+    expect(batches).toHaveLength(1);
+    expect(reconciliations).toBe(0);
+    await expect(importer.reconcile()).resolves.toEqual({
+      enriched: 1,
+      ambiguous: 0,
+    });
+    expect(reconciliations).toBe(1);
   });
 });

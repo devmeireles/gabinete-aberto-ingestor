@@ -22,5 +22,7 @@ export interface DespesaRepository {
   importBilhetesCsv(
     items: readonly BilheteAereoCsv[],
   ): Promise<CsvEnrichmentResult>;
-  enrichFromBilhetesCsv(): Promise<Omit<CsvEnrichmentResult, "imported">>;
+  enrichFromBilhetesCsv(
+    year?: number,
+  ): Promise<Omit<CsvEnrichmentResult, "imported">>;
 }

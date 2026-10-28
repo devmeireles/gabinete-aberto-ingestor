@@ -76,11 +76,14 @@ apaga o volume local do PostgreSQL.
 2. **Sincronize deputados da legislatura desejada.** A legislatura precisa
    estar carregada no passo anterior. O crawler sincroniza os partidos como
    pré-requisito e importa o histórico partidário de cada deputado.
-3. **Pré-valide e importe o CSV anual de passagens.** Importe-o antes da
-   primeira carga de despesas para que as correspondências já estejam no
-   PostgreSQL quando as despesas chegarem.
+3. **Carregue os CSVs oficiais de passagens pelo Inngest.** Envie o evento
+   `camara/bilhetes-aereos.seed` sem dados para importar todos os anos desde
+   2008, ou informe `{"ano": 2025}` para carregar somente um ano. Os ZIPs são
+   baixados da Câmara, extraídos em streaming e importados sem salvar arquivos
+   localmente.
 4. **Sincronize despesas recentes ou faça backfill.** O comando consulta a API
-   por deputado, legislatura e mês; o importador de CSV não é executado junto.
+   por deputado, legislatura e mês. A reconciliação com passageiros e trechos
+   usa os dados já importados no banco.
 
 O campo `legislaturas.legislatura_atual` é booleano. Seu valor é recalculado
 com base na data de Brasília e no intervalo inclusivo `data_inicio`–`data_fim`
@@ -98,28 +101,26 @@ npm run crawler -- <módulo> [argumentos]
 Argumentos com valor aceitam `--opção=valor` ou `--opção valor`. O modo padrão
 é `--dry-run`: consulta e valida sem gravar. Use `--persist` explicitamente
 para gravar; não combine `--persist` com `--dry-run`. Os módulos que consultam
-a API respeitam o rate limit configurado; o importador CSV não faz requisições
-HTTP.
+a API da Câmara respeitam o rate limit configurado. O seed de passagens é
+separado e baixa arquivos oficiais pelo Inngest.
 
-| Módulo         | Argumento                               | Obrigatório | Padrão / comportamento                                                                                                              |
-| -------------- | --------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `legislaturas` | `--legislatura=<id>`                    | Não         | Filtra pelo ID; se omitido, valida todas. CLI é somente dry-run; a persistência é feita pelo evento Inngest.                        |
-| `legislaturas` | `--pages=<n>`                           | Não         | Limite de 1 a 50 páginas; padrão `50`.                                                                                              |
-| `legislaturas` | `--dry-run`                             | Não         | Opcional, pois o CLI sempre é somente leitura.                                                                                      |
-| `deputados`    | `--legislatura=<id>`                    | Sim         | ID positivo da legislatura.                                                                                                         |
-| `deputados`    | `--pages=<n>`                           | Não         | Limite de 1 a 50 páginas; padrão `50`.                                                                                              |
-| `deputados`    | `--dry-run` / `--persist`               | Não         | Dry-run padrão; persistência exige `DATABASE_URL` e migrations.                                                                     |
-| `despesas`     | `--legislatura=<id>`                    | Sim         | ID positivo da legislatura.                                                                                                         |
-| `despesas`     | `--deputado=<id>`                       | No dry-run  | Limita a consulta; no persist, se omitido, usa os deputados já cadastrados na legislatura.                                          |
-| `despesas`     | `--ano=<AAAA>` e `--mes=<MM>`           | Não         | Devem ser usados juntos para sincronizar um mês.                                                                                    |
-| `despesas`     | `--desde=<AAAA-MM>` e `--ate=<AAAA-MM>` | Não         | Devem ser usados juntos; intervalo inclusivo para backfill, máximo 120 meses. Não combinar com `--ano`/`--mes`.                     |
-| `despesas`     | Sem período                             | Não         | Usa o mês corrente e os dois meses anteriores.                                                                                      |
-| `despesas`     | `--pages=<n>`                           | Não         | Limite de 1 a 500 páginas por período; padrão `500`.                                                                                |
-| `despesas`     | `--dry-run` / `--persist`               | Não         | Dry-run padrão; no modo persistente, exige `DATABASE_URL` e migrations.                                                             |
-| `bilhetes-csv` | `--arquivo=<caminho>`                   | Sim         | Arquivo CSV anual oficial, lido em streaming.                                                                                       |
-| `bilhetes-csv` | `--dry-run` / `--persist`               | Não         | Dry-run padrão; valida o arquivo, conta registros/candidatos e imprime amostra. `--persist` grava candidatos e reconcilia despesas. |
+| Módulo         | Argumento                               | Obrigatório | Padrão / comportamento                                                                                          |
+| -------------- | --------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------- |
+| `legislaturas` | `--legislatura=<id>`                    | Não         | Filtra pelo ID; se omitido, valida todas. CLI é somente dry-run; a persistência é feita pelo evento Inngest.    |
+| `legislaturas` | `--pages=<n>`                           | Não         | Limite de 1 a 50 páginas; padrão `50`.                                                                          |
+| `legislaturas` | `--dry-run`                             | Não         | Opcional, pois o CLI sempre é somente leitura.                                                                  |
+| `deputados`    | `--legislatura=<id>`                    | Sim         | ID positivo da legislatura.                                                                                     |
+| `deputados`    | `--pages=<n>`                           | Não         | Limite de 1 a 50 páginas; padrão `50`.                                                                          |
+| `deputados`    | `--dry-run` / `--persist`               | Não         | Dry-run padrão; persistência exige `DATABASE_URL` e migrations.                                                 |
+| `despesas`     | `--legislatura=<id>`                    | Sim         | ID positivo da legislatura.                                                                                     |
+| `despesas`     | `--deputado=<id>`                       | No dry-run  | Limita a consulta; no persist, se omitido, usa os deputados já cadastrados na legislatura.                      |
+| `despesas`     | `--ano=<AAAA>` e `--mes=<MM>`           | Não         | Devem ser usados juntos para sincronizar um mês.                                                                |
+| `despesas`     | `--desde=<AAAA-MM>` e `--ate=<AAAA-MM>` | Não         | Devem ser usados juntos; intervalo inclusivo para backfill, máximo 120 meses. Não combinar com `--ano`/`--mes`. |
+| `despesas`     | Sem período                             | Não         | Usa o mês corrente e os dois meses anteriores.                                                                  |
+| `despesas`     | `--pages=<n>`                           | Não         | Limite de 1 a 500 páginas por período; padrão `500`.                                                            |
+| `despesas`     | `--dry-run` / `--persist`               | Não         | Dry-run padrão; no modo persistente, exige `DATABASE_URL` e migrations.                                         |
 
-### Exemplos por etapa
+### Exemplos de CLI
 
 Validar a API de legislaturas sem persistir:
 
@@ -134,16 +135,8 @@ npm run crawler -- deputados --legislatura=57 --pages=1
 npm run crawler -- deputados --legislatura=57 --persist
 ```
 
-Validar o CSV sem banco e, após revisar a amostra, importá-lo:
-
-```sh
-npm run crawler -- bilhetes-csv --arquivo=assets/Ano-2025.csv
-npm run crawler -- bilhetes-csv --arquivo=assets/Ano-2025.csv --persist
-```
-
-Depois de importar o CSV, sincronizar uma página de despesas de um deputado
-para abril de 2025; em seguida, carregar os três meses recentes de todos os
-deputados já sincronizados:
+Sincronizar uma página de despesas de um deputado para abril de 2025; em
+seguida, carregar os três meses recentes de todos os deputados já sincronizados:
 
 ```sh
 npm run crawler -- despesas --legislatura=57 --deputado=218086 --ano=2025 --mes=4 --pages=1
@@ -156,19 +149,43 @@ Backfill histórico inclusivo:
 npm run crawler -- despesas --legislatura=57 --desde=2023-02 --ate=2026-10 --persist
 ```
 
-O CSV é sempre um comando separado da API. Uma vez importados, os candidatos
-ficam em `bilhetes_aereos_csv`; ao gravar despesas, a aplicação faz a
-reconciliação no banco sem reler o arquivo. É seguro importar o CSV depois da
-API também: nesse caso o importador reconcilia as despesas já armazenadas.
-Valores negativos são preservados. Correspondências ambíguas não escolhem
-automaticamente passageiro ou trecho.
+O seed de passagens é executado exclusivamente pelo Inngest, nunca pela CLI.
+Os registros importados ficam em `bilhetes_aereos_csv`; ao gravar despesas, a
+aplicação reconcilia no banco sem baixar os arquivos novamente. Também é seguro
+executar o seed depois das despesas: a etapa final reconcilia as despesas já
+armazenadas. Valores negativos são preservados. Correspondências ambíguas não
+escolhem automaticamente passageiro ou trecho.
+
+Cada registro CSV mantém o status `available` até ser associado sem ambiguidade
+a uma despesa; nesse caso, passa para `associated` e guarda o ID da despesa.
+Assim, novas reconciliações priorizam o pool ainda disponível. Se os dados da
+despesa mudarem, o bilhete associado é liberado para nova correspondência.
 
 ## Rotinas Inngest
 
-| Função              | Disparo                                  | Trabalho                                                                                                              |
-| ------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `sync-legislaturas` | Evento manual `camara/legislaturas.seed` | Percorre todas as páginas e grava as legislaturas; execute no seed inicial ou quando precisar atualizar a referência. |
-| `sync-despesas`     | Domingo, às 03h no horário de Brasília   | Atualiza os três meses mais recentes de todos os deputados cadastrados na legislatura vigente.                        |
+| Função                 | Disparo                                | Trabalho                                                                                       |
+| ---------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `sync-legislaturas`    | Evento `camara/legislaturas.seed`      | Percorre todas as páginas e grava as legislaturas.                                             |
+| `seed-bilhetes-aereos` | Evento `camara/bilhetes-aereos.seed`   | Sem payload importa de 2008 até o ano corrente; `{"ano": 2025}` importa somente aquele ano.    |
+| `sync-despesas`        | Domingo, às 03h no horário de Brasília | Atualiza os três meses mais recentes de todos os deputados cadastrados na legislatura vigente. |
+
+O seed anual pode ser repetido com segurança. A importação e a reconciliação
+são etapas Inngest independentes para cada ano, limitando o trabalho de cada
+execução anual. Para importar somente um ano, envie pelo painel do Inngest:
+
+```json
+{
+  "name": "camara/bilhetes-aereos.seed",
+  "data": {
+    "ano": 2025
+  }
+}
+```
+
+Para a carga histórica completa, envie o mesmo evento com `data: {}`. O
+Inngest baixa `Ano-2008.csv.zip` até `Ano-<ano-atual>.csv.zip` diretamente de
+`https://www.camara.leg.br/cotas/`, extrai o CSV em streaming e grava os
+candidatos em lotes no PostgreSQL; o ZIP/CSV não é persistido em disco.
 
 Os payloads brutos são mantidos para auditoria e reprocessamento. Os upserts
 normalizados são idempotentes; uma execução interrompida pode ser repetida.

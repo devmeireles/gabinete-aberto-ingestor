@@ -1,5 +1,6 @@
 import { createReadStream } from "node:fs";
 import { basename } from "node:path";
+import { Readable } from "node:stream";
 import { parse as createParser } from "csv-parse";
 import type { BilheteAereoCsvSource } from "@/application/ports/bilhete-aereo-csv-source";
 import type { BilheteAereoCsv } from "@/domain/model/despesa";
@@ -83,20 +84,34 @@ export class StreamingBilheteAereoCsvSource implements BilheteAereoCsvSource {
     filePath: string,
     onRecordRead?: (scanned: number) => void,
   ): AsyncIterable<BilheteAereoCsv> {
+    yield* this.readStream(
+      basename(filePath),
+      createReadStream(filePath),
+      onRecordRead,
+    );
+  }
+
+  async *readStream(
+    fileName: string,
+    content: AsyncIterable<Uint8Array>,
+    onRecordRead?: (scanned: number) => void,
+  ): AsyncIterable<BilheteAereoCsv> {
     const parser = createParser({
       bom: true,
       columns: true,
       delimiter: ";",
       skip_empty_lines: true,
     });
-    const input = createReadStream(filePath).pipe(parser);
+    const stream = Readable.from(content);
+    stream.on("error", (error: Error) => parser.destroy(error));
+    const input = stream.pipe(parser);
     let scanned: number = 0;
     for await (const rawRecord of input) {
       scanned++;
       onRecordRead?.(scanned);
       const candidate = mapCsvRow(
         rawRecord as Record<string, string>,
-        basename(filePath),
+        basename(fileName),
         scanned + 1,
       );
       if (candidate !== undefined) yield candidate;

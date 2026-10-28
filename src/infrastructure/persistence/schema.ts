@@ -364,8 +364,18 @@ export const bilhetesAereosCsv = pgTable(
     trecho: text("trecho").notNull(),
     arquivo: text("arquivo").notNull(),
     linha: integer("linha").notNull(),
+    status: text("status", { enum: ["available", "associated"] })
+      .notNull()
+      .default("available"),
+    associatedExpenseId: bigint("associated_expense_id", {
+      mode: "number",
+    }).references(() => despesas.id),
   },
   (t) => [
+    check(
+      "bilhetes_aereos_csv_association_status_chk",
+      sql`(${t.status} = 'available' AND ${t.associatedExpenseId} IS NULL) OR (${t.status} = 'associated' AND ${t.associatedExpenseId} IS NOT NULL)`,
+    ),
     uniqueIndex("bilhetes_aereos_csv_identity_uq").on(
       t.deputadoId,
       t.legislaturaId,
@@ -389,6 +399,10 @@ export const bilhetesAereosCsv = pgTable(
       t.codDocumento,
       t.dataDocumento,
       t.numDocumento,
+    ),
+    index("bilhetes_aereos_csv_status_year_idx").on(t.status, t.ano),
+    index("bilhetes_aereos_csv_associated_expense_idx").on(
+      t.associatedExpenseId,
     ),
   ],
 );

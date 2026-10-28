@@ -1,20 +1,18 @@
 import { runDeputados } from "./deputados";
 import { runDespesas } from "./despesas";
-import { runBilhetesCsv } from "./bilhetes-csv";
 import { runLegislaturas } from "./legislaturas";
 
-type CrawlerModule = "legislaturas" | "deputados" | "despesas" | "bilhetes-csv";
+type CrawlerModule = "legislaturas" | "deputados" | "despesas";
 
 async function main(): Promise<void> {
   const [moduleName, ...args] = process.argv.slice(2);
   if (
     moduleName !== "legislaturas" &&
     moduleName !== "deputados" &&
-    moduleName !== "despesas" &&
-    moduleName !== "bilhetes-csv"
+    moduleName !== "despesas"
   ) {
     throw new Error(
-      "Informe o módulo: legislaturas, deputados, despesas ou bilhetes-csv. Ex.: npm run crawler -- despesas --legislatura=57 --deputado=220593",
+      "Informe o módulo: legislaturas, deputados ou despesas. Ex.: npm run crawler -- despesas --legislatura=57 --deputado=220593",
     );
   }
 
@@ -23,10 +21,8 @@ async function main(): Promise<void> {
     await runLegislaturas(args);
   } else if (crawlerModule === "deputados") {
     await runDeputados(args);
-  } else if (crawlerModule === "despesas") {
-    await runDespesas(args);
   } else {
-    await runBilhetesCsv(args);
+    await runDespesas(args);
   }
 }
 

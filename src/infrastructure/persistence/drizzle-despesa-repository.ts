@@ -208,6 +208,18 @@ export class DrizzleDespesaRepository implements DespesaRepository {
         })
         .returning({ id: despesas.id });
 
+      if (changed.length > 0) {
+        await tx
+          .update(bilhetesAereosCsv)
+          .set({ status: "available", associatedExpenseId: null })
+          .where(
+            inArray(
+              bilhetesAereosCsv.associatedExpenseId,
+              changed.map(({ id }) => id),
+            ),
+          );
+      }
+
       const enrichment = await this.applyEnrichment(tx, scope);
       return {
         written: changed.length,
@@ -232,30 +244,41 @@ export class DrizzleDespesaRepository implements DespesaRepository {
     });
   }
 
-  async enrichFromBilhetesCsv(): Promise<
-    Omit<CsvEnrichmentResult, "imported">
-  > {
-    return this.db.transaction((tx) => this.applyEnrichment(tx));
+  async enrichFromBilhetesCsv(
+    year?: number,
+  ): Promise<Omit<CsvEnrichmentResult, "imported">> {
+    return this.db.transaction((tx) =>
+      this.applyEnrichment(tx, undefined, year),
+    );
   }
 
   private async applyEnrichment(
     tx: Parameters<Parameters<Database["transaction"]>[0]>[0],
     scope?: Pick<Despesa, "deputadoId" | "legislaturaId" | "ano" | "mes">,
+    year?: number,
   ): Promise<Omit<CsvEnrichmentResult, "imported">> {
-    const scopeWhere =
-      scope === undefined
-        ? undefined
-        : and(
-            eq(despesas.deputadoId, scope.deputadoId),
-            eq(despesas.legislaturaId, scope.legislaturaId),
-            eq(despesas.ano, scope.ano),
-            eq(despesas.mes, scope.mes),
-          );
+    const filters = [
+      ...(scope === undefined
+        ? []
+        : [
+            and(
+              eq(despesas.deputadoId, scope.deputadoId),
+              eq(despesas.legislaturaId, scope.legislaturaId),
+              eq(despesas.ano, scope.ano),
+              eq(despesas.mes, scope.mes),
+            ),
+          ]),
+      ...(year === undefined ? [] : [eq(despesas.ano, year)]),
+    ];
+    const scopeWhere = filters.length === 0 ? undefined : and(...filters);
     const candidates = await tx
       .select({
         despesaId: despesas.id,
         passageiro: sql<string>`min(${bilhetesAereosCsv.passageiro})`,
         trecho: sql<string>`min(${bilhetesAereosCsv.trecho})`,
+        ticketIds: sql<
+          string[]
+        >`json_agg(DISTINCT ${bilhetesAereosCsv.id}::text)`,
         distinctRoutes: sql<number>`count(DISTINCT (${bilhetesAereosCsv.passageiro}, ${bilhetesAereosCsv.trecho}))::int`,
       })
       .from(despesas)
@@ -276,6 +299,10 @@ export class DrizzleDespesaRepository implements DespesaRepository {
           eq(bilhetesAereosCsv.parcela, despesas.parcela),
           eq(bilhetesAereosCsv.codLote, despesas.codLote),
           eq(bilhetesAereosCsv.valorDocumento, despesas.valorDocumento),
+          or(
+            eq(bilhetesAereosCsv.status, "available"),
+            eq(bilhetesAereosCsv.associatedExpenseId, despesas.id),
+          ),
           or(
             eq(bilhetesAereosCsv.cnpjCpfFornecedor, ""),
             eq(fornecedores.cnpjCpf, ""),
@@ -344,6 +371,49 @@ export class DrizzleDespesaRepository implements DespesaRepository {
         )
         .returning({ id: despesas.id });
       enriched += changed.length;
+
+      const associations = batch.flatMap((item) =>
+        item.ticketIds.map((ticketId) => ({
+          ticketId: Number(ticketId),
+          expenseId: item.despesaId,
+        })),
+      );
+      const associationBatchSize: number = 1_000;
+      for (
+        let associationOffset: number = 0;
+        associationOffset < associations.length;
+        associationOffset += associationBatchSize
+      ) {
+        const associationBatch = associations.slice(
+          associationOffset,
+          associationOffset + associationBatchSize,
+        );
+        const ticketIds = associationBatch.map(({ ticketId }) => ticketId);
+        const expenseIds = [
+          ...new Set(associationBatch.map(({ expenseId }) => expenseId)),
+        ];
+        await tx
+          .update(bilhetesAereosCsv)
+          .set({
+            status: "associated",
+            associatedExpenseId: sql`CASE ${bilhetesAereosCsv.id} ${sql.join(
+              associationBatch.map(
+                ({ ticketId, expenseId }) =>
+                  sql`WHEN ${ticketId} THEN ${expenseId}`,
+              ),
+              sql` `,
+            )} ELSE ${bilhetesAereosCsv.associatedExpenseId} END`,
+          })
+          .where(
+            and(
+              inArray(bilhetesAereosCsv.id, ticketIds),
+              or(
+                eq(bilhetesAereosCsv.status, "available"),
+                inArray(bilhetesAereosCsv.associatedExpenseId, expenseIds),
+              ),
+            ),
+          );
+      }
     }
 
     for (
@@ -352,6 +422,15 @@ export class DrizzleDespesaRepository implements DespesaRepository {
       offset += batchSize
     ) {
       const batch = ambiguousMatches.slice(offset, offset + batchSize);
+      await tx
+        .update(bilhetesAereosCsv)
+        .set({ status: "available", associatedExpenseId: null })
+        .where(
+          inArray(
+            bilhetesAereosCsv.associatedExpenseId,
+            batch.map((item) => item.despesaId),
+          ),
+        );
       await tx
         .update(despesas)
         .set({

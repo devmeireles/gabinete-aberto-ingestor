@@ -34,6 +34,45 @@ export class ImportBilhetesAereosCsv {
     filePath: string,
     onProgress?: (progress: CsvImportProgress) => void,
   ): Promise<ImportBilhetesCsvResult> {
+    const result = await this.importCandidates(
+      (onRecordRead) => this.readCandidates(filePath, onRecordRead),
+      onProgress,
+    );
+    const enrichment = await this.reconcile();
+    return { ...result, ...enrichment };
+  }
+
+  async importStream(
+    fileName: string,
+    content: AsyncIterable<Uint8Array>,
+    onProgress?: (progress: CsvImportProgress) => void,
+  ): Promise<ImportBilhetesCsvResult> {
+    const result = await this.importCandidates(
+      (onRecordRead) => this.source.readStream(fileName, content, onRecordRead),
+      onProgress,
+    );
+    return { ...result, enriched: 0, ambiguous: 0 };
+  }
+
+  async reconcile(
+    year?: number,
+  ): Promise<Omit<CsvEnrichmentResult, "imported">> {
+    if (this.repository === undefined) {
+      throw new Error(
+        "O repositório é obrigatório para importar com persistência",
+      );
+    }
+    return this.repository.enrichFromBilhetesCsv(year);
+  }
+
+  private async importCandidates(
+    createCandidates: (
+      onRecordRead: (scanned: number) => void,
+    ) => AsyncIterable<BilheteAereoCsv>,
+    onProgress?: (progress: CsvImportProgress) => void,
+  ): Promise<
+    Pick<ImportBilhetesCsvResult, "scanned" | "candidates" | "imported">
+  > {
     if (this.repository === undefined) {
       throw new Error(
         "O repositório é obrigatório para importar com persistência",
@@ -44,7 +83,7 @@ export class ImportBilhetesAereosCsv {
     let imported: number = 0;
     let batch: BilheteAereoCsv[] = [];
 
-    for await (const candidate of this.readCandidates(filePath, (count) => {
+    for await (const candidate of createCandidates((count) => {
       scanned = count;
       if (scanned % 20_000 === 0) {
         onProgress?.({ scanned, candidates, imported });
@@ -61,8 +100,7 @@ export class ImportBilhetesAereosCsv {
     if (batch.length > 0) {
       imported += (await this.repository.importBilhetesCsv(batch)).imported;
     }
-    const enrichment = await this.repository.enrichFromBilhetesCsv();
-    return { scanned, candidates, imported, ...enrichment };
+    return { scanned, candidates, imported };
   }
 
   async preview(

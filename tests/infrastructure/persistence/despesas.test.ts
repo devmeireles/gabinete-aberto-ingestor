@@ -20,6 +20,8 @@ describe("expense persistence and CSV reconciliation", () => {
       "0003_expenses_and_air_ticket_enrichment.sql",
     );
     await executeMigration(database, "0004_legislatura_atual.sql");
+    await executeMigration(database, "0005_silent_raider.sql");
+    await executeMigration(database, "0006_bilhete_associations.sql");
     await database.exec(`
       INSERT INTO legislaturas (id, uri, data_inicio, data_fim, row_hash)
       VALUES (57, 'https://dadosabertos.camara.leg.br/api/v2/legislaturas/57', '2023-02-01', '2027-01-31', repeat('a', 64));
@@ -98,6 +100,17 @@ describe("expense persistence and CSV reconciliation", () => {
       trecho: "BSB/CGH",
       bilhete_match_ambiguo: false,
     });
+    const associatedTicket = await database.query<{
+      status: string;
+      associated_expense_id: string;
+    }>(
+      `SELECT status, associated_expense_id::text
+       FROM bilhetes_aereos_csv`,
+    );
+    expect(associatedTicket.rows[0]).toEqual({
+      status: "associated",
+      associated_expense_id: "1",
+    });
 
     await repository.importBilhetesCsv([csvTicket("CGH/BSB")]);
     expect(await repository.enrichFromBilhetesCsv()).toEqual({
@@ -117,6 +130,13 @@ describe("expense persistence and CSV reconciliation", () => {
       trecho: null,
       bilhete_match_ambiguo: true,
     });
+    const availableTickets = await database.query<{ status: string }>(
+      `SELECT status FROM bilhetes_aereos_csv ORDER BY id`,
+    );
+    expect(availableTickets.rows).toEqual([
+      { status: "available" },
+      { status: "available" },
+    ]);
 
     await repository.upsertMany(
       [
@@ -143,6 +163,17 @@ describe("expense persistence and CSV reconciliation", () => {
       trecho: null,
       bilhete_match_ambiguo: false,
     });
+    const releasedTickets = await database.query<{
+      status: string;
+      associated_expense_id: string | null;
+    }>(
+      `SELECT status, associated_expense_id::text
+       FROM bilhetes_aereos_csv ORDER BY id`,
+    );
+    expect(releasedTickets.rows).toEqual([
+      { status: "available", associated_expense_id: null },
+      { status: "available", associated_expense_id: null },
+    ]);
   });
 
   it("enforces the deputy-legislature relation", async () => {
@@ -159,6 +190,49 @@ describe("expense persistence and CSV reconciliation", () => {
         )
       `),
     ).rejects.toThrow();
+  });
+
+  it("can limit CSV reconciliation to one expense year", async () => {
+    const repository = new DrizzleDespesaRepository(
+      drizzle(database, { schema }),
+    );
+    const rawPayload = await database.query<{ id: number }>(
+      "SELECT id FROM raw_payloads WHERE request_key = 'fixture'",
+    );
+    const expense = mapDespesa(
+      {
+        ano: 2025,
+        mes: 4,
+        tipoDespesa: "PASSAGEM AÉREA - SIGEPA",
+        codDocumento: "302323",
+        tipoDocumento: "Nota Fiscal",
+        codTipoDocumento: 0,
+        dataDocumento: "2025-04-08T12:00:00",
+        numDocumento: "BFBWSI",
+        parcela: 0,
+        numRessarcimento: "0",
+        codLote: 0,
+        nomeFornecedor: "AZUL",
+        cnpjCpfFornecedor: "09296295000160",
+        valorDocumento: -391.23,
+        valorGlosa: 0,
+        valorLiquido: -391.23,
+        urlDocumento: null,
+      },
+      218086,
+      57,
+    );
+    await repository.upsertMany([expense], rawPayload.rows[0]!.id);
+    await repository.importBilhetesCsv([csvTicket("BSB/CGH")]);
+
+    await expect(repository.enrichFromBilhetesCsv(2024)).resolves.toEqual({
+      enriched: 0,
+      ambiguous: 0,
+    });
+    await expect(repository.enrichFromBilhetesCsv(2025)).resolves.toEqual({
+      enriched: 1,
+      ambiguous: 0,
+    });
   });
 });
 

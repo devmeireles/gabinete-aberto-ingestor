@@ -43,6 +43,13 @@
       "when": 1793211591048,
       "tag": "0005_silent_raider",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793217315504,
+      "tag": "0006_bilhete_associations",
+      "breakpoints": true
     }
   ]
 }

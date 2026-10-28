@@ -1,0 +1,6 @@
+ALTER TABLE "bilhetes_aereos_csv" ADD COLUMN "status" text DEFAULT 'available' NOT NULL;--> statement-breakpoint
+ALTER TABLE "bilhetes_aereos_csv" ADD COLUMN "associated_expense_id" bigint;--> statement-breakpoint
+ALTER TABLE "bilhetes_aereos_csv" ADD CONSTRAINT "bilhetes_aereos_csv_associated_expense_id_despesas_id_fk" FOREIGN KEY ("associated_expense_id") REFERENCES "public"."despesas"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "bilhetes_aereos_csv_status_year_idx" ON "bilhetes_aereos_csv" USING btree ("status","ano");--> statement-breakpoint
+CREATE INDEX "bilhetes_aereos_csv_associated_expense_idx" ON "bilhetes_aereos_csv" USING btree ("associated_expense_id");--> statement-breakpoint
+ALTER TABLE "bilhetes_aereos_csv" ADD CONSTRAINT "bilhetes_aereos_csv_association_status_chk" CHECK (("bilhetes_aereos_csv"."status" = 'available' AND "bilhetes_aereos_csv"."associated_expense_id" IS NULL) OR ("bilhetes_aereos_csv"."status" = 'associated' AND "bilhetes_aereos_csv"."associated_expense_id" IS NOT NULL));

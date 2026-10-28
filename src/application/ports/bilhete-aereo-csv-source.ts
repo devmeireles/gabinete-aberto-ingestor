@@ -5,4 +5,9 @@ export interface BilheteAereoCsvSource {
     filePath: string,
     onRecordRead?: (scanned: number) => void,
   ): AsyncIterable<BilheteAereoCsv>;
+  readStream(
+    fileName: string,
+    content: AsyncIterable<Uint8Array>,
+    onRecordRead?: (scanned: number) => void,
+  ): AsyncIterable<BilheteAereoCsv>;
 }

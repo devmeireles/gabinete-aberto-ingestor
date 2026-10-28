@@ -1,6 +1,7 @@
 import type { Server } from "node:http";
 import { SyncLegislaturas } from "./application/use-cases/sync-legislaturas";
 import { SyncDespesas } from "./application/use-cases/sync-despesas";
+import { ImportBilhetesAereosCsv } from "./application/use-cases/import-bilhetes-aereos-csv";
 import { loadEnv, type Env } from "./config/env";
 import {
   CamaraHttpClient,
@@ -15,10 +16,13 @@ import {
 import { DrizzleLegislaturaRepository } from "@/infrastructure/persistence/drizzle-legislatura-repository";
 import { DrizzleRawPayloadStore } from "@/infrastructure/persistence/drizzle-raw-payload-store";
 import { DrizzleDespesaRepository } from "@/infrastructure/persistence/drizzle-despesa-repository";
+import { StreamingBilheteAereoCsvSource } from "@/infrastructure/csv/streaming-bilhete-aereo-csv-source";
+import { HttpBilheteAereoCsvArchiveSource } from "@/infrastructure/csv/http-bilhete-aereo-csv-archive-source";
 import { DrizzleCrawlerRunRepository } from "@/infrastructure/persistence/drizzle-crawler-run-repository";
 import { createApp } from "@/infrastructure/http/server";
 import { createSyncLegislaturasFunction } from "@/infrastructure/inngest/functions/sync-legislaturas.function";
 import { createSyncDespesasFunction } from "@/infrastructure/inngest/functions/sync-despesas.function";
+import { createSeedBilhetesAereosFunction } from "@/infrastructure/inngest/functions/seed-bilhetes-aereos.function";
 
 /**
  * COMPOSITION ROOT: o único lugar que conhece todas as implementações
@@ -42,17 +46,29 @@ function main(): void {
     new DrizzleRawPayloadStore(database.db),
     new DrizzleLegislaturaRepository(database.db),
   );
+  const despesaRepository: DrizzleDespesaRepository =
+    new DrizzleDespesaRepository(database.db);
   const syncDespesas: SyncDespesas = new SyncDespesas(
     gateway,
     new DrizzleRawPayloadStore(database.db),
-    new DrizzleDespesaRepository(database.db),
+    despesaRepository,
   );
+  const importBilhetesAereosCsv: ImportBilhetesAereosCsv =
+    new ImportBilhetesAereosCsv(
+      new StreamingBilheteAereoCsvSource(),
+      despesaRepository,
+    );
   const crawlerRunRepository: DrizzleCrawlerRunRepository =
     new DrizzleCrawlerRunRepository(database.db);
 
   const server: Server = createApp([
     createSyncLegislaturasFunction(syncLegislaturas, crawlerRunRepository),
     createSyncDespesasFunction(syncDespesas, crawlerRunRepository),
+    createSeedBilhetesAereosFunction(
+      importBilhetesAereosCsv,
+      new HttpBilheteAereoCsvArchiveSource(),
+      crawlerRunRepository,
+    ),
   ]).listen(env.port, () => {
     console.log(
       JSON.stringify({
