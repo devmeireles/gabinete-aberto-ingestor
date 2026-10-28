@@ -5,7 +5,11 @@ import { parse as createParser } from "csv-parse";
 import type { BilheteAereoCsvSource } from "@/application/ports/bilhete-aereo-csv-source";
 import type { BilheteAereoCsv } from "@/domain/model/despesa";
 
-const TICKET_TYPE: string = "PASSAGEM AÉREA - SIGEPA";
+const TICKET_TYPES: ReadonlySet<string> = new Set([
+  "PASSAGEM AÉREA - REEMBOLSO",
+  "PASSAGEM AÉREA - RPA",
+  "PASSAGEM AÉREA - SIGEPA",
+]);
 
 function required(record: Record<string, string>, field: string): string {
   const value: string | undefined = record[field];
@@ -50,7 +54,7 @@ function mapCsvRow(
   linha: number,
 ): BilheteAereoCsv | undefined {
   const tipoDespesa: string = required(record, "txtDescricao");
-  if (tipoDespesa.toLocaleUpperCase("pt-BR") !== TICKET_TYPE) {
+  if (!TICKET_TYPES.has(tipoDespesa.toLocaleUpperCase("pt-BR"))) {
     return undefined;
   }
   const date: string = required(record, "datEmissao");

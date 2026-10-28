@@ -22,6 +22,7 @@ describe("expense persistence and CSV reconciliation", () => {
     await executeMigration(database, "0004_legislatura_atual.sql");
     await executeMigration(database, "0005_silent_raider.sql");
     await executeMigration(database, "0006_bilhete_associations.sql");
+    await executeMigration(database, "0012_curly_black_tarantula.sql");
     await database.exec(`
       INSERT INTO legislaturas (id, uri, data_inicio, data_fim, row_hash)
       VALUES (57, 'https://dadosabertos.camara.leg.br/api/v2/legislaturas/57', '2023-02-01', '2027-01-31', repeat('a', 64));
@@ -190,6 +191,27 @@ describe("expense persistence and CSV reconciliation", () => {
         )
       `),
     ).rejects.toThrow();
+  });
+
+  it("keeps otherwise identical tickets from different categories", async () => {
+    const repository = new DrizzleDespesaRepository(
+      drizzle(database, { schema }),
+    );
+    const sigepaTicket = csvTicket("BSB/CGH");
+    const rpaTicket: BilheteAereoCsv = {
+      ...sigepaTicket,
+      tipoDespesa: "PASSAGEM AÉREA - RPA",
+    };
+
+    await repository.importBilhetesCsv([sigepaTicket, rpaTicket]);
+
+    const rows = await database.query<{ tipo_despesa: string }>(
+      `SELECT tipo_despesa FROM bilhetes_aereos_csv ORDER BY tipo_despesa`,
+    );
+    expect(rows.rows).toEqual([
+      { tipo_despesa: "PASSAGEM AÉREA - RPA" },
+      { tipo_despesa: "PASSAGEM AÉREA - SIGEPA" },
+    ]);
   });
 
   it("can limit CSV reconciliation to one expense year", async () => {

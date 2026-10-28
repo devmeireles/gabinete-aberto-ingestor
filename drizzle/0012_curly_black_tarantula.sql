@@ -1,0 +1,2 @@
+DROP INDEX "bilhetes_aereos_csv_identity_uq";--> statement-breakpoint
+CREATE UNIQUE INDEX "bilhetes_aereos_csv_identity_uq" ON "bilhetes_aereos_csv" USING btree ("deputado_id","legislatura_id","ano","mes","tipo_despesa","cod_documento","cod_tipo_documento","data_documento","num_documento","parcela","cod_lote","valor_documento","passageiro","trecho");

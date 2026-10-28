@@ -478,6 +478,7 @@ export const bilhetesAereosCsv = pgTable(
       t.legislaturaId,
       t.ano,
       t.mes,
+      t.tipoDespesa,
       t.codDocumento,
       t.codTipoDocumento,
       t.dataDocumento,
