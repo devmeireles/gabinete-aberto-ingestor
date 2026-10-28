@@ -214,6 +214,66 @@ describe("expense persistence and CSV reconciliation", () => {
     ]);
   });
 
+  it("stores tickets without passenger or route without associating them", async () => {
+    const repository = new DrizzleDespesaRepository(
+      drizzle(database, { schema }),
+    );
+    const rawPayload = await database.query<{ id: number }>(
+      "SELECT id FROM raw_payloads WHERE request_key = 'fixture'",
+    );
+    const expense = mapDespesa(
+      {
+        ano: 2025,
+        mes: 4,
+        tipoDespesa: "PASSAGEM AÉREA - SIGEPA",
+        codDocumento: "302323",
+        tipoDocumento: "Nota Fiscal",
+        codTipoDocumento: 0,
+        dataDocumento: "2025-04-08T12:00:00",
+        numDocumento: "BFBWSI",
+        parcela: 0,
+        numRessarcimento: "0",
+        codLote: 0,
+        nomeFornecedor: "AZUL",
+        cnpjCpfFornecedor: "09296295000160",
+        valorDocumento: -391.23,
+        valorGlosa: 0,
+        valorLiquido: -391.23,
+        urlDocumento: null,
+      },
+      218086,
+      57,
+    );
+    await repository.upsertMany([expense], rawPayload.rows[0]!.id);
+    await repository.importBilhetesCsv([
+      { ...csvTicket(""), passageiro: "" },
+    ]);
+
+    await expect(repository.enrichFromBilhetesCsv()).resolves.toEqual({
+      enriched: 0,
+      ambiguous: 0,
+    });
+    const rows = await database.query<{
+      status: string;
+      associated_expense_id: string | null;
+      passageiro: string | null;
+      trecho: string | null;
+    }>(
+      `SELECT b.status, b.associated_expense_id::text,
+              d.passageiro, d.trecho
+       FROM bilhetes_aereos_csv b
+       JOIN despesas d ON d.id = 1`,
+    );
+    expect(rows.rows).toEqual([
+      {
+        status: "available",
+        associated_expense_id: null,
+        passageiro: null,
+        trecho: null,
+      },
+    ]);
+  });
+
   it("can limit CSV reconciliation to one expense year", async () => {
     const repository = new DrizzleDespesaRepository(
       drizzle(database, { schema }),

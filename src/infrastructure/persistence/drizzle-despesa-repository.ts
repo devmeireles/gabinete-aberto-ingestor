@@ -274,8 +274,12 @@ export class DrizzleDespesaRepository implements DespesaRepository {
     const candidates = await tx
       .select({
         despesaId: despesas.id,
-        passageiro: sql<string>`min(${bilhetesAereosCsv.passageiro})`,
-        trecho: sql<string>`min(${bilhetesAereosCsv.trecho})`,
+        passageiro: sql<
+          string | null
+        >`min(NULLIF(${bilhetesAereosCsv.passageiro}, ''))`,
+        trecho: sql<
+          string | null
+        >`min(NULLIF(${bilhetesAereosCsv.trecho}, ''))`,
         ticketIds: sql<
           string[]
         >`json_agg(DISTINCT ${bilhetesAereosCsv.id}::text)`,
@@ -302,6 +306,10 @@ export class DrizzleDespesaRepository implements DespesaRepository {
           or(
             eq(bilhetesAereosCsv.status, "available"),
             eq(bilhetesAereosCsv.associatedExpenseId, despesas.id),
+          ),
+          or(
+            sql`${bilhetesAereosCsv.passageiro} <> ''`,
+            sql`${bilhetesAereosCsv.trecho} <> ''`,
           ),
           or(
             eq(bilhetesAereosCsv.cnpjCpfFornecedor, ""),
@@ -338,13 +346,15 @@ export class DrizzleDespesaRepository implements DespesaRepository {
           bilheteMatchAmbiguo: false,
           passageiro: sql`CASE ${despesas.id} ${sql.join(
             batch.map(
-              (item) => sql`WHEN ${item.despesaId} THEN ${item.passageiro}`,
+              (item) =>
+                sql`WHEN ${item.despesaId} THEN COALESCE(${item.passageiro}, ${despesas.passageiro})`,
             ),
             sql` `,
           )} ELSE ${despesas.passageiro} END`,
           trecho: sql`CASE ${despesas.id} ${sql.join(
             batch.map(
-              (item) => sql`WHEN ${item.despesaId} THEN ${item.trecho}`,
+              (item) =>
+                sql`WHEN ${item.despesaId} THEN COALESCE(${item.trecho}, ${despesas.trecho})`,
             ),
             sql` `,
           )} ELSE ${despesas.trecho} END`,
@@ -361,8 +371,16 @@ export class DrizzleDespesaRepository implements DespesaRepository {
                   eq(despesas.id, item.despesaId),
                   or(
                     eq(despesas.bilheteMatchAmbiguo, true),
-                    sql`${despesas.passageiro} IS DISTINCT FROM ${item.passageiro}`,
-                    sql`${despesas.trecho} IS DISTINCT FROM ${item.trecho}`,
+                    ...(item.passageiro === null
+                      ? []
+                      : [
+                          sql`${despesas.passageiro} IS DISTINCT FROM ${item.passageiro}`,
+                        ]),
+                    ...(item.trecho === null
+                      ? []
+                      : [
+                          sql`${despesas.trecho} IS DISTINCT FROM ${item.trecho}`,
+                        ]),
                   ),
                 ),
               ),

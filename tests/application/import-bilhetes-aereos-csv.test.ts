@@ -103,6 +103,36 @@ describe("ImportBilhetesAereosCsv", () => {
     });
   });
 
+  it("imports candidates when passenger and route columns are absent", async () => {
+    const csv =
+      '"txtDescricao";"indTipoDocumento";"nuDeputadoId";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento"\n' +
+      '"PASSAGEM AÉREA - SIGEPA";"0";"218086";"57";"2025";"4";"302323";"2025-04-08T12:00:00";"BFBWSI";"0";"0";"092.962.950/0016-0";"-391.23"\n';
+    const imported: BilheteAereoCsv[] = [];
+    const repository: DespesaRepository = {
+      getActiveLegislaturaId: async () => 57,
+      listDeputadoIds: async () => [218086],
+      upsertMany: async () => ({
+        written: 0,
+        unchanged: 0,
+        enriched: 0,
+        ambiguous: 0,
+      }),
+      importBilhetesCsv: async (items) => {
+        imported.push(...items);
+        return { imported: items.length, enriched: 0, ambiguous: 0 };
+      },
+      enrichFromBilhetesCsv: async () => ({ enriched: 0, ambiguous: 0 }),
+    };
+
+    await new ImportBilhetesAereosCsv(
+      new StreamingBilheteAereoCsvSource(),
+      repository,
+    ).importStream("Ano-2025.csv", Readable.from([Buffer.from(csv)]));
+
+    expect(imported).toHaveLength(1);
+    expect(imported[0]).toMatchObject({ passageiro: "", trecho: "" });
+  });
+
   it("imports a decompressed stream without reconciling until requested", async () => {
     const csv =
       '"txtDescricao";"indTipoDocumento";"nuDeputadoId";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento";"txtPassageiro";"txtTrecho"\n' +

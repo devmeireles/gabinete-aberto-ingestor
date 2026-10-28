@@ -19,6 +19,10 @@ function required(record: Record<string, string>, field: string): string {
   return value.trim();
 }
 
+function optional(record: Record<string, string>, field: string): string {
+  return (record[field] ?? "").trim();
+}
+
 function integerField(
   record: Record<string, string>,
   field: string,
@@ -76,8 +80,8 @@ function mapCsvRow(
     codLote: integerField(record, "numLote", 0),
     cnpjCpfFornecedor: /^0+$/.test(digits) ? "" : digits,
     valorDocumento: moneyField(record, "vlrDocumento"),
-    passageiro: required(record, "txtPassageiro"),
-    trecho: required(record, "txtTrecho"),
+    passageiro: optional(record, "txtPassageiro"),
+    trecho: optional(record, "txtTrecho"),
     arquivo,
     linha,
   };
