@@ -6,4 +6,5 @@ export interface Legislatura {
   readonly dataInicio: string;
   /** Null enquanto a legislatura não tem data de término registrada. */
   readonly dataFim: string | null;
+  readonly legislaturaAtual: boolean;
 }

@@ -19,6 +19,7 @@ describe("expense persistence and CSV reconciliation", () => {
       database,
       "0003_expenses_and_air_ticket_enrichment.sql",
     );
+    await executeMigration(database, "0004_legislatura_atual.sql");
     await database.exec(`
       INSERT INTO legislaturas (id, uri, data_inicio, data_fim, row_hash)
       VALUES (57, 'https://dadosabertos.camara.leg.br/api/v2/legislaturas/57', '2023-02-01', '2027-01-31', repeat('a', 64));

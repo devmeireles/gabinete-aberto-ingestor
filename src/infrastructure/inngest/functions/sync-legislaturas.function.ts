@@ -31,8 +31,7 @@ export function createSyncLegislaturasFunction(useCase: SyncLegislaturas) {
   return inngest.createFunction(
     {
       id: "sync-legislaturas",
-      // Legislaturas mudam raramente; sincroniza no primeiro dia de cada mês.
-      triggers: [{ cron: "TZ=America/Sao_Paulo 0 3 1 * *" }],
+      triggers: [{ event: "camara/legislaturas.seed" }],
       retries: 5,
       concurrency: CAMARA_API_CONCURRENCY,
       singleton: { mode: "skip" },

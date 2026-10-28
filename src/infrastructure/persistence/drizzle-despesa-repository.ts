@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import type {
   CsvEnrichmentResult,
   DespesaSyncResult,
@@ -36,15 +36,17 @@ export class DrizzleDespesaRepository implements DespesaRepository {
   constructor(private readonly db: Database) {}
 
   async getActiveLegislaturaId(asOf: string): Promise<number> {
+    const isCurrent = sql`${legislaturas.dataInicio} <= ${asOf}::date AND (${legislaturas.dataFim} IS NULL OR ${legislaturas.dataFim} >= ${asOf}::date)`;
+    await this.db
+      .update(legislaturas)
+      .set({ legislaturaAtual: isCurrent })
+      .where(
+        sql`${legislaturas.legislaturaAtual} IS DISTINCT FROM (${isCurrent})`,
+      );
     const rows = await this.db
       .select({ id: legislaturas.id })
       .from(legislaturas)
-      .where(
-        and(
-          lte(legislaturas.dataInicio, asOf),
-          or(gte(legislaturas.dataFim, asOf), isNull(legislaturas.dataFim)),
-        ),
-      );
+      .where(eq(legislaturas.legislaturaAtual, true));
     if (rows.length !== 1) {
       throw new Error(
         `Esperada uma legislatura vigente em ${asOf}, encontradas: ${rows.length}`,

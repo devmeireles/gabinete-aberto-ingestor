@@ -52,7 +52,7 @@ export class HttpCamaraGateway
         ...(query.id === undefined ? {} : { id: query.id }),
         pagina: query.pagina,
         itens: PAGE_SIZE,
-        ordem: "ASC",
+        ordem: "DESC",
         ordenarPor: "id",
       },
     );

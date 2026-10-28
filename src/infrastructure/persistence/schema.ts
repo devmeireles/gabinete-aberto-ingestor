@@ -63,6 +63,7 @@ export const legislaturas = pgTable("legislaturas", {
   uri: text("uri").notNull(),
   dataInicio: date("data_inicio", { mode: "string" }).notNull(),
   dataFim: date("data_fim", { mode: "string" }),
+  legislaturaAtual: boolean("legislatura_atual").notNull().default(false),
   rowHash: char("row_hash", { length: 64 }).notNull(),
   sourcePayloadId: bigint("source_payload_id", { mode: "number" }).references(
     () => rawPayloads.id,

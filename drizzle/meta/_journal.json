@@ -29,6 +29,13 @@
       "when": 1793203541396,
       "tag": "0003_expenses_and_air_ticket_enrichment",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793207660248,
+      "tag": "0004_legislatura_atual",
+      "breakpoints": true
     }
   ]
 }

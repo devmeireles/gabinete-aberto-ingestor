@@ -6,7 +6,6 @@ import {
   type DeputadoHistoryProgress,
 } from "@/application/use-cases/prepare-deputados-page";
 import { SyncDeputados } from "@/application/use-cases/sync-deputados";
-import { SyncLegislaturas } from "@/application/use-cases/sync-legislaturas";
 import { SyncPartidos } from "@/application/use-cases/sync-partidos";
 import {
   CamaraHttpClient,
@@ -16,11 +15,12 @@ import { HttpCamaraGateway } from "@/infrastructure/camara/http-camara-gateway";
 import { RequestScheduler } from "@/infrastructure/camara/request-scheduler";
 import { createDatabase } from "@/infrastructure/persistence/client";
 import { DrizzleDeputadoRepository } from "@/infrastructure/persistence/drizzle-deputado-repository";
-import { DrizzleLegislaturaRepository } from "@/infrastructure/persistence/drizzle-legislatura-repository";
 import { DrizzlePartidoRepository } from "@/infrastructure/persistence/drizzle-partido-repository";
 import { DrizzleRawPayloadStore } from "@/infrastructure/persistence/drizzle-raw-payload-store";
 import type { DatabaseHandle } from "@/infrastructure/persistence/client";
 import { loadCamaraEnv } from "@/config/env";
+import { eq } from "drizzle-orm";
+import { legislaturas } from "@/infrastructure/persistence/schema";
 
 const MAX_PAGES: number = 50;
 const HISTORY_PROGRESS_INTERVAL: number = 25;
@@ -164,7 +164,6 @@ export async function runDeputados(args: readonly string[]): Promise<void> {
 
   let database: DatabaseHandle | undefined;
   let sync: SyncDeputados | undefined;
-  let syncLegislaturas: SyncLegislaturas | undefined;
   let syncPartidos: SyncPartidos | undefined;
   if (options.persist) {
     const databaseUrl: string | undefined = process.env["DATABASE_URL"];
@@ -174,11 +173,6 @@ export async function runDeputados(args: readonly string[]): Promise<void> {
     database = createDatabase(databaseUrl);
     const rawStore: DrizzleRawPayloadStore = new DrizzleRawPayloadStore(
       database.db,
-    );
-    syncLegislaturas = new SyncLegislaturas(
-      gateway,
-      rawStore,
-      new DrizzleLegislaturaRepository(database.db),
     );
     syncPartidos = new SyncPartidos(
       gateway,
@@ -194,30 +188,34 @@ export async function runDeputados(args: readonly string[]): Promise<void> {
 
   try {
     const knownPartidos: Map<number, string> = new Map<number, string>();
-    let legislaturaCount: number;
-    if (syncLegislaturas !== undefined) {
-      const result = await syncLegislaturas.executePage(
-        1,
-        options.legislaturaId,
+    const pageLegislaturas = await gateway.listLegislaturas({
+      pagina: 1,
+      id: options.legislaturaId,
+    });
+    pageLegislaturas.items.map((item) => mapLegislatura(item));
+    const legislaturaCount: number = pageLegislaturas.items.length;
+    if (
+      pageLegislaturas.items.some((item) => item.id !== options.legislaturaId)
+    ) {
+      throw new Error(
+        `A API retornou uma legislatura diferente de ${options.legislaturaId}`,
       );
-      legislaturaCount = result.fetched;
-    } else {
-      const page = await gateway.listLegislaturas({
-        pagina: 1,
-        id: options.legislaturaId,
-      });
-      page.items.map(mapLegislatura);
-      legislaturaCount = page.items.length;
-      if (page.items.some((item) => item.id !== options.legislaturaId)) {
-        throw new Error(
-          `A API retornou uma legislatura diferente de ${options.legislaturaId}`,
-        );
-      }
     }
     if (legislaturaCount !== 1) {
       throw new Error(
         `Legislatura ${options.legislaturaId} não foi encontrada de forma única na API`,
       );
+    }
+    if (database !== undefined) {
+      const storedLegislatura = await database.db
+        .select({ id: legislaturas.id })
+        .from(legislaturas)
+        .where(eq(legislaturas.id, options.legislaturaId));
+      if (storedLegislatura.length !== 1) {
+        throw new Error(
+          `Legislatura ${options.legislaturaId} não está no banco; envie o evento Inngest camara/legislaturas.seed antes de persistir deputados`,
+        );
+      }
     }
 
     let partyPageNumber: number = 1;

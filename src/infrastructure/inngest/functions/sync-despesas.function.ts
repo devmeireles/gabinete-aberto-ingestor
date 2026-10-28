@@ -6,6 +6,7 @@ import {
   CAMARA_API_CONCURRENCY,
   inngest,
 } from "@/infrastructure/inngest/client";
+import { currentDateInBrazil } from "@/shared/date";
 
 interface Month {
   readonly ano: number;
@@ -42,7 +43,7 @@ export function createSyncDespesasFunction(useCase: SyncDespesas) {
       singleton: { mode: "skip" },
     },
     async ({ step }): Promise<SyncDespesasSummary> => {
-      const today: string = new Date().toISOString().slice(0, 10);
+      const today: string = currentDateInBrazil();
       const legislaturaId: number = await step.run(
         "despesas-legislatura-ativa",
         () => useCase.getActiveLegislaturaId(today),

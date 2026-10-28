@@ -58,7 +58,9 @@ export class SyncLegislaturas {
       );
     }
 
-    const entities: Legislatura[] = page.items.map(mapLegislatura);
+    const entities: Legislatura[] = page.items.map((item) =>
+      mapLegislatura(item),
+    );
     const result: UpsertResult = await this.repository.upsertMany(
       entities,
       payloadId,

@@ -24,30 +24,47 @@ export class DrizzleLegislaturaRepository implements LegislaturaRepository {
       uri: item.uri,
       dataInicio: item.dataInicio,
       dataFim: item.dataFim,
-      // Hash só dos campos de negócio: é ele que decide se vale escrever.
-      rowHash: canonicalHash(item),
+      legislaturaAtual: item.legislaturaAtual,
+      rowHash: canonicalHash({
+        id: item.id,
+        uri: item.uri,
+        dataInicio: item.dataInicio,
+        dataFim: item.dataFim,
+      }),
       sourcePayloadId,
     }));
 
-    // setWhere: se o hash é igual, a linha NÃO é tocada (sem write, sem
-    // updated_at falso, sem WAL à toa). Só o que mudou volta no RETURNING.
-    const changed: Array<{ id: number }> = await this.db
-      .insert(legislaturas)
-      .values(rows)
-      .onConflictDoUpdate({
-        target: legislaturas.id,
-        set: {
-          uri: sql`excluded.uri`,
-          dataInicio: sql`excluded.data_inicio`,
-          dataFim: sql`excluded.data_fim`,
-          rowHash: sql`excluded.row_hash`,
-          sourcePayloadId: sql`excluded.source_payload_id`,
-          updatedAt: sql`now()`,
-        },
-        setWhere: sql`${legislaturas.rowHash} IS DISTINCT FROM excluded.row_hash`,
-      })
-      .returning({ id: legislaturas.id });
+    return this.db.transaction(async (tx) => {
+      const changed: Array<{ id: number }> = await tx
+        .insert(legislaturas)
+        .values(rows)
+        .onConflictDoUpdate({
+          target: legislaturas.id,
+          set: {
+            uri: sql`excluded.uri`,
+            dataInicio: sql`excluded.data_inicio`,
+            dataFim: sql`excluded.data_fim`,
+            rowHash: sql`excluded.row_hash`,
+            sourcePayloadId: sql`excluded.source_payload_id`,
+            updatedAt: sql`now()`,
+          },
+          setWhere: sql`${legislaturas.rowHash} IS DISTINCT FROM excluded.row_hash`,
+        })
+        .returning({ id: legislaturas.id });
 
-    return { written: changed.length, unchanged: rows.length - changed.length };
+      const today = sql`(timezone('America/Sao_Paulo', now()))::date`;
+      const isCurrent = sql`${legislaturas.dataInicio} <= ${today} AND (${legislaturas.dataFim} IS NULL OR ${legislaturas.dataFim} >= ${today})`;
+      await tx
+        .update(legislaturas)
+        .set({ legislaturaAtual: isCurrent })
+        .where(
+          sql`${legislaturas.legislaturaAtual} IS DISTINCT FROM (${isCurrent})`,
+        );
+
+      return {
+        written: changed.length,
+        unchanged: rows.length - changed.length,
+      };
+    });
   }
 }
