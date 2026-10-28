@@ -1,0 +1,22 @@
+# Copie para .env (nunca versionar o .env).
+
+# Connection string POOLED do Neon (host com "-pooler"). Usada pela aplicação.
+
+DATABASE_URL=postgresql://USUARIO:SENHA@ep-xxxx-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require
+
+# Connection string DIRETA do Neon (sem "-pooler"). Usada só pelas migrations.
+
+DATABASE_URL_DIRECT=postgresql://USUARIO:SENHA@ep-xxxx.sa-east-1.aws.neon.tech/neondb?sslmode=require
+
+# Inngest Cloud (obrigatória em produção; lidas pelo próprio SDK).
+
+INNGEST_SIGNING_KEY=
+INNGEST_EVENT_KEY=
+
+# Opcionais (valores padrao entre parenteses).
+
+# PORT=8080
+
+# CAMARA_MAX_CONCURRENT=2
+
+# CAMARA_MIN_INTERVAL_MS=250

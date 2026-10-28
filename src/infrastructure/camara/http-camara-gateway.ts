@@ -1,0 +1,116 @@
+import type {
+  DeputadoGateway,
+  DeputadoDto,
+  ListDeputadosQuery,
+} from "@/application/ports/camara-gateway/deputados";
+import type {
+  DespesaGateway,
+  DespesaDto,
+  ListDespesasQuery,
+} from "@/application/ports/camara-gateway/despesas";
+import type {
+  LegislaturaDto,
+  LegislaturaGateway,
+  ListLegislaturasQuery,
+} from "@/application/ports/camara-gateway/legislaturas";
+import type {
+  ListPartidosQuery,
+  PartidoDto,
+  PartidoGateway,
+} from "@/application/ports/camara-gateway/partidos";
+import type { Page } from "@/application/ports/camara-gateway/page";
+import type {
+  CamaraHttpClient,
+  CamaraResponse,
+  Link,
+} from "./camara-http-client";
+
+/** Máximo documentado pela API por requisição. */
+const PAGE_SIZE: number = 100;
+
+/**
+ * ADAPTER da porta CamaraGateway.
+ *
+ * Por quê "hasNext" via links: a API devolve links com rel "self", "next",
+ * "first" e "last" (confirmado em chamada real a /legislaturas). A ausência de
+ * "next" é o sinal oficial de última página; não inferimos pelo tamanho.
+ */
+export class HttpCamaraGateway
+  implements LegislaturaGateway, PartidoGateway, DeputadoGateway, DespesaGateway
+{
+  constructor(private readonly http: CamaraHttpClient) {}
+
+  async listLegislaturas(
+    query: ListLegislaturasQuery,
+  ): Promise<Page<LegislaturaDto>> {
+    const response: CamaraResponse<LegislaturaDto[]> = await this.http.getJson(
+      "legislaturas",
+      {
+        ...(query.id === undefined ? {} : { id: query.id }),
+        pagina: query.pagina,
+        itens: PAGE_SIZE,
+        ordem: "ASC",
+        ordenarPor: "id",
+      },
+    );
+    return this.toPage(response, query.pagina);
+  }
+
+  async listPartidos(query: ListPartidosQuery): Promise<Page<PartidoDto>> {
+    const response: CamaraResponse<PartidoDto[]> = await this.http.getJson(
+      "partidos",
+      {
+        idLegislatura: query.idLegislatura,
+        pagina: query.pagina,
+        itens: PAGE_SIZE,
+        ordem: "ASC",
+        ordenarPor: "id",
+      },
+    );
+    return this.toPage(response, query.pagina);
+  }
+
+  async listDeputados(query: ListDeputadosQuery): Promise<Page<DeputadoDto>> {
+    const response: CamaraResponse<DeputadoDto[]> = await this.http.getJson(
+      "deputados",
+      {
+        idLegislatura: query.idLegislatura,
+        pagina: query.pagina,
+        itens: PAGE_SIZE,
+        ordem: "ASC",
+        ordenarPor: "id",
+      },
+    );
+    return this.toPage(response, query.pagina);
+  }
+
+  async listDespesas(query: ListDespesasQuery): Promise<Page<DespesaDto>> {
+    const response: CamaraResponse<DespesaDto[]> = await this.http.getJson(
+      `deputados/${query.idDeputado}/despesas`,
+      {
+        ano: query.ano,
+        mes: query.mes,
+        pagina: query.pagina,
+        itens: PAGE_SIZE,
+        // Ordem estável: sem ela, a paginação pode repetir/pular itens.
+        ordem: "ASC",
+        ordenarPor: "codDocumento",
+      },
+    );
+    return this.toPage(response, query.pagina);
+  }
+
+  private hasNextPage(links: readonly Link[]): boolean {
+    return links.some((link: Link) => link.rel === "next");
+  }
+
+  private toPage<T>(response: CamaraResponse<T[]>, page: number): Page<T> {
+    return {
+      items: response.envelope.dados,
+      page,
+      hasNext: this.hasNextPage(response.envelope.links),
+      requestKey: response.requestKey,
+      rawBody: response.envelope,
+    };
+  }
+}
