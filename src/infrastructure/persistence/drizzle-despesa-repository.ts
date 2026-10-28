@@ -4,6 +4,7 @@ import type {
   DespesaSyncResult,
   DespesaRepository,
 } from "@/application/ports/despesa-repository";
+import { DuplicateExpenseNaturalKeyError } from "@/application/errors/duplicate-expense-natural-key-error";
 import type { BilheteAereoCsv, Despesa } from "@/domain/model/despesa";
 import { canonicalHash } from "@/shared/canonical-hash";
 import type { Database } from "./client";
@@ -68,15 +69,25 @@ export class DrizzleDespesaRepository implements DespesaRepository {
     items: readonly Despesa[],
     sourcePayloadId: number,
   ): Promise<DespesaSyncResult> {
-    if (new Set(items.map(naturalKey)).size !== items.length) {
-      throw new Error("A página contém despesas com chave natural duplicada");
+    const uniqueItems = new Map<string, Despesa>();
+    for (const item of items) {
+      const key: string = naturalKey(item);
+      const existing: Despesa | undefined = uniqueItems.get(key);
+      if (
+        existing !== undefined &&
+        canonicalHash(existing) !== canonicalHash(item)
+      ) {
+        throw new DuplicateExpenseNaturalKeyError(key);
+      }
+      uniqueItems.set(key, item);
     }
-    if (items.length === 0) {
+    const expenses: readonly Despesa[] = [...uniqueItems.values()];
+    if (expenses.length === 0) {
       return { written: 0, unchanged: 0, enriched: 0, ambiguous: 0 };
     }
-    const scope = items[0]!;
+    const scope = expenses[0]!;
     if (
-      items.some(
+      expenses.some(
         (item) =>
           item.deputadoId !== scope.deputadoId ||
           item.legislaturaId !== scope.legislaturaId ||
@@ -90,7 +101,9 @@ export class DrizzleDespesaRepository implements DespesaRepository {
     }
 
     return this.db.transaction(async (tx) => {
-      const categoryNames = [...new Set(items.map((item) => item.tipoDespesa))];
+      const categoryNames = [
+        ...new Set(expenses.map((item) => item.tipoDespesa)),
+      ];
       await tx
         .insert(tiposDespesa)
         .values(categoryNames.map((nome) => ({ nome })))
@@ -105,7 +118,7 @@ export class DrizzleDespesaRepository implements DespesaRepository {
 
       const supplierPairs = [
         ...new Map(
-          items.map((item) => [
+          expenses.map((item) => [
             supplierKey(item.nomeFornecedor, item.cnpjCpfFornecedor),
             {
               nome: item.nomeFornecedor,
@@ -136,7 +149,7 @@ export class DrizzleDespesaRepository implements DespesaRepository {
         supplierRows.map((row) => [supplierKey(row.nome, row.cnpjCpf), row.id]),
       );
 
-      const values = items.map((item) => {
+      const values = expenses.map((item) => {
         const tipoDespesaId: number | undefined = categoryIds.get(
           item.tipoDespesa,
         );

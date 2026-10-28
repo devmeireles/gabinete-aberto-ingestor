@@ -3,6 +3,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mapDespesa } from "@/application/mappers/despesa-mapper";
+import { DuplicateExpenseNaturalKeyError } from "@/application/errors/duplicate-expense-natural-key-error";
 import type { BilheteAereoCsv } from "@/domain/model/despesa";
 import { DrizzleDespesaRepository } from "@/infrastructure/persistence/drizzle-despesa-repository";
 import * as schema from "@/infrastructure/persistence/schema";
@@ -177,6 +178,89 @@ describe("expense persistence and CSV reconciliation", () => {
     ]);
   });
 
+  it("writes an identical natural-key expense only once per page", async () => {
+    const repository = new DrizzleDespesaRepository(
+      drizzle(database, { schema }),
+    );
+    const rawPayload = await database.query<{ id: number }>(
+      "SELECT id FROM raw_payloads WHERE request_key = 'fixture'",
+    );
+    const expense = mapDespesa(
+      {
+        ano: 2025,
+        mes: 4,
+        tipoDespesa: "PASSAGEM AÉREA - SIGEPA",
+        codDocumento: "302323",
+        tipoDocumento: "Nota Fiscal",
+        codTipoDocumento: 0,
+        dataDocumento: "2025-04-08T12:00:00",
+        numDocumento: "BFBWSI",
+        parcela: 0,
+        numRessarcimento: "0",
+        codLote: 0,
+        nomeFornecedor: "AZUL",
+        cnpjCpfFornecedor: "09296295000160",
+        valorDocumento: -391.23,
+        valorGlosa: 0,
+        valorLiquido: -391.23,
+        urlDocumento: null,
+      },
+      218086,
+      57,
+    );
+
+    await expect(
+      repository.upsertMany([expense, expense], rawPayload.rows[0]!.id),
+    ).resolves.toMatchObject({ written: 1, unchanged: 1 });
+    const rows = await database.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM despesas",
+    );
+    expect(rows.rows[0]?.count).toBe("1");
+  });
+
+  it("rejects conflicting records that share a natural key", async () => {
+    const repository = new DrizzleDespesaRepository(
+      drizzle(database, { schema }),
+    );
+    const rawPayload = await database.query<{ id: number }>(
+      "SELECT id FROM raw_payloads WHERE request_key = 'fixture'",
+    );
+    const expense = mapDespesa(
+      {
+        ano: 2025,
+        mes: 4,
+        tipoDespesa: "PASSAGEM AÉREA - SIGEPA",
+        codDocumento: "302323",
+        tipoDocumento: "Nota Fiscal",
+        codTipoDocumento: 0,
+        dataDocumento: "2025-04-08T12:00:00",
+        numDocumento: "BFBWSI",
+        parcela: 0,
+        numRessarcimento: "0",
+        codLote: 0,
+        nomeFornecedor: "AZUL",
+        cnpjCpfFornecedor: "09296295000160",
+        valorDocumento: -391.23,
+        valorGlosa: 0,
+        valorLiquido: -391.23,
+        urlDocumento: null,
+      },
+      218086,
+      57,
+    );
+
+    await expect(
+      repository.upsertMany(
+        [expense, { ...expense, valorDocumento: -400, valorLiquido: -400 }],
+        rawPayload.rows[0]!.id,
+      ),
+    ).rejects.toBeInstanceOf(DuplicateExpenseNaturalKeyError);
+    const rows = await database.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM despesas",
+    );
+    expect(rows.rows[0]?.count).toBe("0");
+  });
+
   it("enforces the deputy-legislature relation", async () => {
     await expect(
       database.exec(`
@@ -245,9 +329,7 @@ describe("expense persistence and CSV reconciliation", () => {
       57,
     );
     await repository.upsertMany([expense], rawPayload.rows[0]!.id);
-    await repository.importBilhetesCsv([
-      { ...csvTicket(""), passageiro: "" },
-    ]);
+    await repository.importBilhetesCsv([{ ...csvTicket(""), passageiro: "" }]);
 
     await expect(repository.enrichFromBilhetesCsv()).resolves.toEqual({
       enriched: 0,

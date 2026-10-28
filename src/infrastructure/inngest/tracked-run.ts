@@ -1,3 +1,5 @@
+import { NonRetriableError } from "inngest";
+import { DuplicateExpenseNaturalKeyError } from "@/application/errors/duplicate-expense-natural-key-error";
 import type {
   CrawlerRunRepository,
   CrawlerRunStart,
@@ -41,6 +43,9 @@ export async function runTrackedCrawler<TSummary extends object>(
         `Crawler ${functionId} falhou e não foi possível registrar a falha`,
         { cause: recordingError },
       );
+    }
+    if (error instanceof DuplicateExpenseNaturalKeyError) {
+      throw new NonRetriableError(message, { cause: error });
     }
     throw error;
   }
