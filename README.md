@@ -191,6 +191,41 @@ despesa mudarem, o bilhete associado é liberado para nova correspondência.
 | `seed-perfis-deputados` | Evento `camara/deputados.perfil.seed`        | Sem payload enriquece sequencialmente todos os deputados cadastrados; com `{"deputadoId": 218086}`, processa somente um. |
 | `seed-bilhetes-aereos`  | Evento `camara/bilhetes-aereos.seed`         | Sem payload importa de 2008 até o ano corrente; `{"ano": 2025}` importa somente aquele ano.           |
 | `sync-despesas`         | Domingo, às 03h no horário de Brasília       | Atualiza os três meses mais recentes de todos os deputados cadastrados na legislatura vigente.        |
+| `backfill-despesas`     | Evento `camara/despesas.backfill`            | Enfileira a varredura retroativa por deputado e mês; workers independentes processam e registram cada resultado. |
+
+Para fazer uma varredura retroativa no Inngest, envie um evento com a
+legislatura e um intervalo inclusivo de até 12 meses. Sem `deputadoId`, serão
+enfileirados os deputados cadastrados naquela legislatura:
+
+```json
+{
+  "name": "camara/despesas.backfill",
+  "data": {
+    "legislaturaId": 57,
+    "desde": "2025-01",
+    "ate": "2025-12"
+  }
+}
+```
+
+Para processar um deputado específico, inclua seu ID:
+
+```json
+{
+  "name": "camara/despesas.backfill",
+  "data": {
+    "legislaturaId": 57,
+    "deputadoId": 218086,
+    "desde": "2025-01",
+    "ate": "2025-12"
+  }
+}
+```
+
+O evento coordenador informa quantos trabalhos foram enfileirados; cada
+combinação deputado/mês roda como execução própria, com retries e
+rastreabilidade. Se precisar de mais de 12 meses, divida a varredura em
+intervalos menores.
 
 Exemplo de evento para carregar partidos e enfileirar seus perfis:
 

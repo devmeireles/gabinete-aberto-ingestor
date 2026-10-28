@@ -34,6 +34,7 @@ import { createSeedPerfilDeputadoFunction } from "@/infrastructure/inngest/funct
 import { createSeedPartidosFunction } from "@/infrastructure/inngest/functions/seed-partidos.function";
 import { createSeedPerfilPartidoFunction } from "@/infrastructure/inngest/functions/seed-perfis-partidos.function";
 import { createSyncDespesasFunction } from "@/infrastructure/inngest/functions/sync-despesas.function";
+import { createBackfillDespesasFunction } from "@/infrastructure/inngest/functions/backfill-despesas.function";
 import { createSeedBilhetesAereosFunction } from "@/infrastructure/inngest/functions/seed-bilhetes-aereos.function";
 
 /**
@@ -119,6 +120,7 @@ function main(): void {
       crawlerRunRepository,
     ),
     createSyncDespesasFunction(syncDespesas, crawlerRunRepository),
+    ...createBackfillDespesasFunction(syncDespesas, crawlerRunRepository),
     createSeedBilhetesAereosFunction(
       importBilhetesAereosCsv,
       new HttpBilheteAereoCsvArchiveSource(),
