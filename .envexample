@@ -20,3 +20,10 @@ INNGEST_EVENT_KEY=
 # CAMARA_MAX_CONCURRENT=2
 
 # CAMARA_MIN_INTERVAL_MS=250
+
+# Para docker-compose local (altere a senha antes de usar).
+
+POSTGRES_DB=gabinete_aberto
+POSTGRES_USER=gabinete_aberto
+POSTGRES_PASSWORD=change-me
+# POSTGRES_PORT=5432

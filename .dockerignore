@@ -1,0 +1,9 @@
+.git
+.env
+.env.*
+!.envexample
+node_modules
+dist
+coverage
+*.log
+assets/Ano-*.csv

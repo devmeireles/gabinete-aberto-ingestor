@@ -1,6 +1,10 @@
 {
-  "name": "api",
+  "name": "gabinete-aberto-ingestor",
   "version": "1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/devmeireles/gabinete-aberto-ingestor.git"
+  },
   "main": "./src/main.js",
   "type": "module",
   "scripts": {

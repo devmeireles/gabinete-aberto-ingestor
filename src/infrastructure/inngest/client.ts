@@ -4,7 +4,7 @@ import { Inngest } from "inngest";
  * Cliente único do Inngest. A chave de assinatura (INNGEST_SIGNING_KEY) e a
  * chave de eventos (INNGEST_EVENT_KEY) vêm do ambiente e são lidas pelo SDK.
  */
-export const inngest: Inngest = new Inngest({ id: "camara-etl" });
+export const inngest: Inngest = new Inngest({ id: "gabinete-aberto-ingestor" });
 
 /**
  * Orçamento GLOBAL de requisições à API da Câmara.

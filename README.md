@@ -49,6 +49,22 @@ endereço local. Para desenvolvimento local, por exemplo:
 npx inngest-cli@latest dev -u http://localhost:8080/api/inngest
 ```
 
+### Executar localmente com Docker Compose
+
+Defina uma senha local em `.env` (`POSTGRES_PASSWORD`) e suba PostgreSQL,
+migrations e o worker:
+
+```sh
+docker compose up --build
+```
+
+O Compose não cria um container de API nem um serviço separado de crawler.
+Ele inicia o banco e um único worker; a migration roda antes de o worker
+iniciar. Conecte o Inngest Dev Server ao worker em
+`http://localhost:8080/api/inngest` para receber eventos e cron locais.
+`docker compose down` para os containers; `docker compose down -v` também
+apaga o volume local do PostgreSQL.
+
 ## Fluxo recomendado de ingestão
 
 1. **Carregue as legislaturas uma vez pelo Inngest.** A função

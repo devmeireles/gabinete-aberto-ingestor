@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-gabinete_aberto}
+      POSTGRES_USER: ${POSTGRES_USER:-gabinete_aberto}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - gabinete-aberto-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test:
+        ["CMD-SHELL", 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/gabinete-aberto-ingestor.Dockerfile
+      target: migrate
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gabinete_aberto}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gabinete_aberto}
+      DATABASE_URL_DIRECT: postgresql://${POSTGRES_USER:-gabinete_aberto}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gabinete_aberto}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  gabinete-aberto-ingestor:
+    build:
+      context: .
+      dockerfile: docker/gabinete-aberto-ingestor.Dockerfile
+      target: production
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gabinete_aberto}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gabinete_aberto}
+      INNGEST_SIGNING_KEY: ${INNGEST_SIGNING_KEY:-}
+      CAMARA_MAX_CONCURRENT: ${CAMARA_MAX_CONCURRENT:-2}
+      CAMARA_MIN_INTERVAL_MS: ${CAMARA_MIN_INTERVAL_MS:-250}
+      PORT: 8080
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  gabinete-aberto-postgres-data:

@@ -54,7 +54,12 @@ function main(): void {
     createSyncLegislaturasFunction(syncLegislaturas, crawlerRunRepository),
     createSyncDespesasFunction(syncDespesas, crawlerRunRepository),
   ]).listen(env.port, () => {
-    console.log(JSON.stringify({ msg: "camara-etl ouvindo", port: env.port }));
+    console.log(
+      JSON.stringify({
+        msg: "gabinete-aberto-ingestor ouvindo",
+        port: env.port,
+      }),
+    );
   });
 
   // O Cloud Run manda SIGTERM antes de derrubar a instância: terminamos as

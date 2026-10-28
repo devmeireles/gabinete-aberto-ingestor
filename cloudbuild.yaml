@@ -1,0 +1,102 @@
+substitutions:
+  _REGION: southamerica-east1
+  _SERVICE: gabinete-aberto-ingestor
+  _REPOSITORY: gabinete-aberto-ingestor
+
+steps:
+  - name: node:22-slim
+    id: Test
+    waitFor: ["-"]
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        npm ci
+        npm run check
+        npm test
+
+  - name: node:22-slim
+    id: Apply database migrations
+    waitFor: ["Test"]
+    entrypoint: bash
+    secretEnv: ["DATABASE_URL_DIRECT"]
+    args:
+      - -ceu
+      - |
+        export DATABASE_URL="$${DATABASE_URL_DIRECT}"
+        npm ci
+        npm run db:migrate
+
+  - name: gcr.io/cloud-builders/docker
+    id: Build worker image
+    waitFor: ["Test"]
+    args:
+      - build
+      - -f
+      - docker/gabinete-aberto-ingestor.Dockerfile
+      - --target
+      - production
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    id: Push worker image
+    waitFor: ["Build worker image"]
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: Deploy worker to Cloud Run
+    waitFor: ["Push worker image", "Apply database migrations"]
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA
+      - --region
+      - ${_REGION}
+      - --allow-unauthenticated
+      - --min
+      - "0"
+      - --max
+      - "2"
+      - --memory
+      - 1Gi
+      - --cpu
+      - "1"
+      - --timeout
+      - 3600
+      - --set-env-vars
+      - NODE_ENV=production,CAMARA_MAX_CONCURRENT=2,CAMARA_MIN_INTERVAL_MS=250
+      - --set-secrets
+      - DATABASE_URL=DATABASE_URL:latest,INNGEST_SIGNING_KEY=INNGEST_SIGNING_KEY:latest
+      - --quiet
+
+  # Inngest must refresh its registered function list after the worker deploy.
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: Sync Inngest app
+    waitFor: ["Deploy worker to Cloud Run"]
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        WORKER_URL="$(gcloud run services describe ${_SERVICE} \
+          --region ${_REGION} --format='value(status.url)')"
+        echo "Syncing Inngest app at $${WORKER_URL}/api/inngest"
+        curl -fsS --retry 5 --retry-connrefused --retry-delay 5 \
+          -X PUT "$${WORKER_URL}/api/inngest"
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$COMMIT_SHA
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/DATABASE_URL_DIRECT/versions/latest
+      env: DATABASE_URL_DIRECT
+
+options:
+  logging: CLOUD_LOGGING_ONLY
