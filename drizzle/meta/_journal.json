@@ -8,6 +8,20 @@
       "when": 1793145756841,
       "tag": "0000_init_raw_and_phase1",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793200163224,
+      "tag": "0001_party_legislatura_relations",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793201766826,
+      "tag": "0002_deputado_partido_vigencias",
+      "breakpoints": true
     }
   ]
 }

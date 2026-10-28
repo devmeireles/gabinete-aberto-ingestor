@@ -28,13 +28,6 @@ export function mapDeputado(
     throw new InvalidSourceDataError(`deputado ${dto.id} sem uri`);
   }
 
-  const uriPartido: string | null =
-    typeof dto.uriPartido === "string" && dto.uriPartido.trim() !== ""
-      ? dto.uriPartido
-      : null;
-  const partidoId: number | null =
-    uriPartido === null ? null : extractPartidoId(uriPartido, dto.id);
-
   return {
     deputado: {
       id: dto.id,
@@ -45,34 +38,10 @@ export function mapDeputado(
     legislatura: {
       deputadoId: dto.id,
       legislaturaId: expectedLegislaturaId,
-      siglaPartido: optionalString(dto.siglaPartido),
-      partidoId,
       siglaUf: optionalString(dto.siglaUf),
       email: optionalString(dto.email),
     },
   };
-}
-
-function extractPartidoId(uri: string, deputadoId: number): number {
-  let parsed: URL;
-  try {
-    parsed = new URL(uri);
-  } catch {
-    throw new InvalidSourceDataError(
-      `deputado ${deputadoId} com uriPartido inválida`,
-    );
-  }
-
-  const match: RegExpMatchArray | null = parsed.pathname.match(
-    /\/partidos\/(\d+)\/?$/,
-  );
-  const id: number = match === null ? Number.NaN : Number(match[1]);
-  if (!Number.isSafeInteger(id) || id <= 0) {
-    throw new InvalidSourceDataError(
-      `deputado ${deputadoId} com uriPartido sem id válido`,
-    );
-  }
-  return id;
 }
 
 function optionalString(value: string | null | undefined): string | null {

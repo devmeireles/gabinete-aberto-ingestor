@@ -17,6 +17,15 @@ export interface ListDeputadosQuery {
   readonly pagina: number;
 }
 
+export interface DeputadoHistoricoDto {
+  readonly id: number;
+  readonly idLegislatura: number;
+  readonly siglaPartido: string | null;
+  readonly uriPartido: string | null;
+  readonly dataHora: string;
+}
+
 export interface DeputadoGateway {
   listDeputados(query: ListDeputadosQuery): Promise<Page<DeputadoDto>>;
+  getDeputadoHistorico(deputadoId: number): Promise<Page<DeputadoHistoricoDto>>;
 }

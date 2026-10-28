@@ -10,8 +10,15 @@ export interface Deputado {
 export interface DeputadoLegislatura {
   readonly deputadoId: number;
   readonly legislaturaId: number;
-  readonly siglaPartido: string | null;
-  readonly partidoId: number | null;
   readonly siglaUf: string | null;
   readonly email: string | null;
+}
+
+/** Período em que o deputado esteve vinculado a um partido na legislatura. */
+export interface DeputadoPartidoVigencia {
+  readonly deputadoId: number;
+  readonly legislaturaId: number;
+  readonly partidoId: number | null;
+  readonly dataInicio: string;
+  readonly dataFim: string | null;
 }

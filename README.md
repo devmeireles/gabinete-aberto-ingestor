@@ -21,14 +21,14 @@ npm run dev
 O serviço inicia na porta `8080` por padrão. `GET /healthz` responde à
 verificação de disponibilidade; `/api/inngest` expõe o endpoint do Inngest.
 
-| Variável | Obrigatória | Padrão | Descrição |
-| --- | --- | --- | --- |
-| `DATABASE_URL` | Sim | — | Connection string PostgreSQL usada pela aplicação. |
-| `PORT` | Não | `8080` | Porta HTTP. |
-| `CAMARA_MAX_CONCURRENT` | Não | `2` | Máximo de requisições simultâneas à API por instância. |
-| `CAMARA_MIN_INTERVAL_MS` | Não | `250` | Intervalo mínimo entre inícios de requisições por instância. |
-| `INNGEST_SIGNING_KEY` | Em produção | — | Chave de assinatura lida pelo SDK do Inngest. |
-| `INNGEST_EVENT_KEY` | Conforme configuração Inngest | — | Chave de eventos lida pelo SDK do Inngest. |
+| Variável                 | Obrigatória                   | Padrão | Descrição                                                    |
+| ------------------------ | ----------------------------- | ------ | ------------------------------------------------------------ |
+| `DATABASE_URL`           | Sim                           | —      | Connection string PostgreSQL usada pela aplicação.           |
+| `PORT`                   | Não                           | `8080` | Porta HTTP.                                                  |
+| `CAMARA_MAX_CONCURRENT`  | Não                           | `2`    | Máximo de requisições simultâneas à API por instância.       |
+| `CAMARA_MIN_INTERVAL_MS` | Não                           | `250`  | Intervalo mínimo entre inícios de requisições por instância. |
+| `INNGEST_SIGNING_KEY`    | Em produção                   | —      | Chave de assinatura lida pelo SDK do Inngest.                |
+| `INNGEST_EVENT_KEY`      | Conforme configuração Inngest | —      | Chave de eventos lida pelo SDK do Inngest.                   |
 
 Use uma connection string PostgreSQL adequada ao ambiente. A configuração
 recomendada para produção e os valores de exemplo estão em
@@ -36,17 +36,17 @@ recomendada para produção e os valores de exemplo estão em
 
 ## Comandos
 
-| Comando | Descrição |
-| --- | --- |
-| `npm run dev` | Executa a aplicação em modo watch. |
+| Comando                       | Descrição                                                    |
+| ----------------------------- | ------------------------------------------------------------ |
+| `npm run dev`                 | Executa a aplicação em modo watch.                           |
 | `npm run crawler -- <módulo>` | Executa um crawler em dry-run por padrão; `--persist` grava. |
-| `npm run build` | Compila TypeScript para `dist/`. |
-| `npm start` | Executa a versão compilada. |
-| `npm test` | Executa os testes Vitest. |
-| `npm run typecheck` | Verifica os tipos sem emitir arquivos. |
-| `npm run lint` | Executa ESLint em `src/`. |
-| `npm run format:check` | Verifica formatação com Prettier em `src/`. |
-| `npm run check` | Executa formatação, lint e verificação de tipos. |
+| `npm run build`               | Compila TypeScript para `dist/`.                             |
+| `npm start`                   | Executa a versão compilada.                                  |
+| `npm test`                    | Executa os testes Vitest.                                    |
+| `npm run typecheck`           | Verifica os tipos sem emitir arquivos.                       |
+| `npm run lint`                | Executa ESLint em `src/`.                                    |
+| `npm run format:check`        | Verifica formatação com Prettier em `src/`.                  |
+| `npm run check`               | Executa formatação, lint e verificação de tipos.             |
 
 O schema Drizzle fica em `src/infrastructure/persistence/schema.ts` e as
 migrations em `drizzle/`. `drizzle.config.ts` usa `DATABASE_URL_DIRECT` para
@@ -82,8 +82,18 @@ depender somente do que utiliza. `HttpCamaraGateway` implementa essas portas
 com o cliente HTTP compartilhado.
 
 A listagem de deputados usa páginas de 250 itens, ordenadas por nome, e segue
-o indicador `next` retornado pela API. A sincronização grava a identidade do
-deputado e sua associação temporal com a legislatura em transação.
+o indicador `next` retornado pela API. Como a listagem pode repetir o mesmo
+deputado em diferentes vínculos partidários, o crawler deduplica por ID e
+consulta `/deputados/{id}/historico`. As mudanças são normalizadas em períodos
+de vigência na tabela `deputado_partido_vigencias`.
+
+Cada vínculo referencia o partido e a legislatura por uma FK composta, e o
+deputado e sua legislatura por outra FK composta. Assim, mudanças partidárias
+dentro do mandato são preservadas sem escolher arbitrariamente uma sigla da
+listagem. As datas são armazenadas como horário local exatamente como fornecido
+pela API. O payload de cada histórico permanece disponível para auditoria.
+Registros anteriores à nova tabela são migrados com início desconhecido; a
+próxima sincronização substitui esse vínculo aproximado pelas vigências da API.
 
 ## Fluxo e confiabilidade da ingestão
 
@@ -104,7 +114,10 @@ controlar a pressão global sobre a API.
 
 No estado atual, somente legislaturas está conectada ao agendamento Inngest.
 O crawler de deputados pode ser executado manualmente por legislatura; a
-sincronização de partidos e despesas ainda precisa ser implementada.
+sincronização dos partidos necessários é executada como pré-requisito desse
+crawler. Para cada deputado único, o módulo também consulta seu endpoint de
+histórico partidário, portanto a execução completa faz mais requisições que a
+listagem paginada. Despesas ainda precisam de um fluxo próprio.
 
 O comando unificado aceita o módulo `legislaturas` ou `deputados`. O dry-run é
 o padrão; `--persist` habilita gravação e `--dry-run` pode ser informado
@@ -142,10 +155,16 @@ npm run db:migrate
 npm run crawler -- deputados --legislatura=57 --persist
 ```
 
-A legislatura correspondente precisa existir na tabela `legislaturas` antes
-da sincronização, pois cada associação de deputado possui chave estrangeira
-para ela. O processo é idempotente e pode ser repetido: só altera registros
-normalizados quando os campos de negócio mudam.
+Cada deputado único exige uma consulta adicional ao endpoint de histórico.
+Durante essa etapa, o crawler informa quantos históricos serão consultados,
+reporta o progresso a cada 25 respostas e identifica falhas com o ID do
+deputado. A página só é reportada como concluída após validar todos os
+históricos.
+
+O crawler sincroniza automaticamente os dados de referência da legislatura e
+os partidos antes de persistir os deputados. O processo é idempotente e pode
+ser repetido: só altera registros normalizados quando os campos de negócio
+mudam.
 
 ### Dry-run sem gravação
 

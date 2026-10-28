@@ -1,23 +1,26 @@
-import type { DeputadoGateway } from "@/application/ports/camara-gateway/deputados";
-import type { Page } from "@/application/ports/camara-gateway/page";
-import type { DeputadoDto } from "@/application/ports/camara-gateway/deputados";
 import type { DeputadoRepository } from "@/application/ports/deputado-repository";
 import type { RawPayloadStore } from "@/application/ports/raw-payload-store";
-import { mapDeputado } from "@/application/mappers/deputado-mapper";
-import type { Deputado, DeputadoLegislatura } from "@/domain/model/deputado";
 import type { UpsertResult } from "@/application/ports/legislatura-repository";
+import type {
+  DeputadoHistoryProgress,
+  PrepareDeputadosPage,
+} from "@/application/use-cases/prepare-deputados-page";
 
 export interface SyncDeputadosPageResult {
   readonly page: number;
   readonly hasNext: boolean;
   readonly fetched: number;
+  readonly validated: number;
+  readonly duplicateRecords: number;
+  readonly partyAffiliations: number;
+  readonly deputadoIds: readonly number[];
   readonly written: number;
   readonly unchanged: number;
 }
 
 export class SyncDeputados {
   constructor(
-    private readonly gateway: DeputadoGateway,
+    private readonly preparePage: PrepareDeputadosPage,
     private readonly rawStore: RawPayloadStore,
     private readonly repository: DeputadoRepository,
   ) {}
@@ -25,32 +28,50 @@ export class SyncDeputados {
   async executePage(
     legislaturaId: number,
     pagina: number,
+    knownPartidos: ReadonlyMap<number, string>,
+    previouslySeen: ReadonlySet<number> = new Set(),
+    onHistoryProgress?: (progress: DeputadoHistoryProgress) => void,
   ): Promise<SyncDeputadosPageResult> {
-    const page: Page<DeputadoDto> = await this.gateway.listDeputados({
-      idLegislatura: legislaturaId,
+    const prepared = await this.preparePage.execute(
+      legislaturaId,
       pagina,
+      knownPartidos,
+      previouslySeen,
+      onHistoryProgress,
+    );
+    const sourcePayloadId: number = await this.rawStore.save(
+      prepared.requestKey,
+      prepared.rawBody,
+    );
+    const historicos = await Promise.all(
+      prepared.historicos.map(async (history) => ({
+        deputadoId: history.deputadoId,
+        legislaturaId: history.legislaturaId,
+        vigencias: history.vigencias,
+        sourcePayloadId: await this.rawStore.save(
+          history.requestKey,
+          history.rawBody,
+        ),
+      })),
+    );
+    const result: UpsertResult = await this.repository.syncPage({
+      deputados: prepared.deputados.map((item) => item.deputado),
+      legislaturas: prepared.deputados.map((item) => item.legislatura),
+      sourcePayloadId,
+      historicos,
     });
-    const payloadId: number = await this.rawStore.save(
-      page.requestKey,
-      page.rawBody,
-    );
-    const mapped = page.items.map((dto: DeputadoDto) =>
-      mapDeputado(dto, legislaturaId),
-    );
-    const deputados: Deputado[] = mapped.map((item) => item.deputado);
-    const memberships: DeputadoLegislatura[] = mapped.map(
-      (item) => item.legislatura,
-    );
-    const result: UpsertResult = await this.repository.upsertMany(
-      deputados,
-      memberships,
-      payloadId,
-    );
 
     return {
-      page: page.page,
-      hasNext: page.hasNext,
-      fetched: page.items.length,
+      page: prepared.page,
+      hasNext: prepared.hasNext,
+      fetched: prepared.fetched,
+      validated: prepared.deputados.length,
+      duplicateRecords: prepared.duplicateRecords,
+      partyAffiliations: historicos.reduce(
+        (count, history) => count + history.vigencias.length,
+        0,
+      ),
+      deputadoIds: prepared.deputadoIds,
       written: result.written,
       unchanged: result.unchanged,
     };

@@ -2,7 +2,9 @@ import {
   bigint,
   bigserial,
   char,
+  check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -12,6 +14,7 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 /**
  * CAMADA RAW
@@ -89,6 +92,26 @@ export const partidos = pgTable(
   (t) => [index("partidos_sigla_idx").on(t.sigla)],
 );
 
+export const partidoLegislaturas = pgTable(
+  "partido_legislaturas",
+  {
+    partidoId: integer("partido_id")
+      .notNull()
+      .references(() => partidos.id),
+    legislaturaId: integer("legislatura_id")
+      .notNull()
+      .references(() => legislaturas.id),
+    rowHash: char("row_hash", { length: 64 }).notNull(),
+    sourcePayloadId: bigint("source_payload_id", { mode: "number" }).references(
+      () => rawPayloads.id,
+    ),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.partidoId, t.legislaturaId] })],
+);
+
 /** Identidade estável do deputado (o que não muda entre legislaturas). */
 export const deputados = pgTable("deputados", {
   id: integer("id").primaryKey(),
@@ -105,12 +128,8 @@ export const deputados = pgTable("deputados", {
 });
 
 /**
- * Contexto temporal: partido, UF e e-mail pertencem à (deputado, legislatura),
- * não ao deputado. Um deputado pode trocar de partido entre legislaturas.
- *
- * partido_id é uma referência "suave" (sem FK) extraída de uriPartido: não
- * queremos que uma inconsistência da fonte trave a ingestão. Divergências
- * viram checagem de qualidade de dados, não erro de carga.
+ * Contexto temporal do mandato. A filiação partidária tem vigências próprias
+ * em deputado_partido_vigencias, pois pode mudar durante a legislatura.
  */
 export const deputadoLegislaturas = pgTable(
   "deputado_legislaturas",
@@ -121,8 +140,6 @@ export const deputadoLegislaturas = pgTable(
     legislaturaId: integer("legislatura_id")
       .notNull()
       .references(() => legislaturas.id),
-    siglaPartido: text("sigla_partido"),
-    partidoId: integer("partido_id"),
     siglaUf: char("sigla_uf", { length: 2 }),
     email: text("email"),
     rowHash: char("row_hash", { length: 64 }).notNull(),
@@ -133,8 +150,58 @@ export const deputadoLegislaturas = pgTable(
       .notNull()
       .defaultNow(),
   },
+  (t) => [primaryKey({ columns: [t.deputadoId, t.legislaturaId] })],
+);
+
+/**
+ * Histórico de filiação partidária: cada linha representa uma vigência dentro
+ * da legislatura. data_inicio nula só é permitida no backfill legado, quando a
+ * fonte anterior não guardava a data exata da mudança.
+ */
+export const deputadoPartidoVigencias = pgTable(
+  "deputado_partido_vigencias",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    deputadoId: integer("deputado_id").notNull(),
+    legislaturaId: integer("legislatura_id").notNull(),
+    partidoId: integer("partido_id"),
+    dataInicio: timestamp("data_inicio", {
+      withTimezone: false,
+      mode: "string",
+    }),
+    dataFim: timestamp("data_fim", { withTimezone: false, mode: "string" }),
+    rowHash: char("row_hash", { length: 64 }).notNull(),
+    sourcePayloadId: bigint("source_payload_id", { mode: "number" }).references(
+      () => rawPayloads.id,
+    ),
+  },
   (t) => [
-    primaryKey({ columns: [t.deputadoId, t.legislaturaId] }),
-    index("deputado_leg_partido_idx").on(t.partidoId),
+    foreignKey({
+      name: "deputado_partido_vigencias_deputado_legislatura_fk",
+      columns: [t.deputadoId, t.legislaturaId],
+      foreignColumns: [
+        deputadoLegislaturas.deputadoId,
+        deputadoLegislaturas.legislaturaId,
+      ],
+    }),
+    foreignKey({
+      name: "deputado_partido_vigencias_partido_legislatura_fk",
+      columns: [t.partidoId, t.legislaturaId],
+      foreignColumns: [
+        partidoLegislaturas.partidoId,
+        partidoLegislaturas.legislaturaId,
+      ],
+    }),
+    index("deputado_partido_vigencias_deputado_leg_idx").on(
+      t.deputadoId,
+      t.legislaturaId,
+    ),
+    uniqueIndex("deputado_partido_vigencias_deputado_leg_inicio_uq")
+      .on(t.deputadoId, t.legislaturaId, t.dataInicio)
+      .where(sql`${t.dataInicio} IS NOT NULL`),
+    check(
+      "deputado_partido_vigencias_data_check",
+      sql`${t.dataFim} IS NULL OR ${t.dataInicio} IS NULL OR ${t.dataFim} >= ${t.dataInicio}`,
+    ),
   ],
 );

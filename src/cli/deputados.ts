@@ -1,8 +1,13 @@
 import "dotenv/config";
-import type { Page } from "@/application/ports/camara-gateway/page";
-import type { DeputadoDto } from "@/application/ports/camara-gateway/deputados";
-import { mapDeputado } from "@/application/mappers/deputado-mapper";
+import { mapLegislatura } from "@/application/mappers/legislatura-mapper";
+import { mapPartido } from "@/application/mappers/partido-mapper";
+import {
+  PrepareDeputadosPage,
+  type DeputadoHistoryProgress,
+} from "@/application/use-cases/prepare-deputados-page";
 import { SyncDeputados } from "@/application/use-cases/sync-deputados";
+import { SyncLegislaturas } from "@/application/use-cases/sync-legislaturas";
+import { SyncPartidos } from "@/application/use-cases/sync-partidos";
 import {
   CamaraHttpClient,
   DEFAULT_OPTIONS,
@@ -11,11 +16,14 @@ import { HttpCamaraGateway } from "@/infrastructure/camara/http-camara-gateway";
 import { RequestScheduler } from "@/infrastructure/camara/request-scheduler";
 import { createDatabase } from "@/infrastructure/persistence/client";
 import { DrizzleDeputadoRepository } from "@/infrastructure/persistence/drizzle-deputado-repository";
+import { DrizzleLegislaturaRepository } from "@/infrastructure/persistence/drizzle-legislatura-repository";
+import { DrizzlePartidoRepository } from "@/infrastructure/persistence/drizzle-partido-repository";
 import { DrizzleRawPayloadStore } from "@/infrastructure/persistence/drizzle-raw-payload-store";
 import type { DatabaseHandle } from "@/infrastructure/persistence/client";
 import { loadCamaraEnv } from "@/config/env";
 
 const MAX_PAGES: number = 50;
+const HISTORY_PROGRESS_INTERVAL: number = 25;
 
 interface Options {
   readonly legislaturaId: number;
@@ -92,6 +100,54 @@ export function parseDeputadoOptions(args: readonly string[]): Options {
   return { legislaturaId, pageLimit, persist };
 }
 
+function reportHistoryProgress(
+  page: number,
+): (progress: DeputadoHistoryProgress) => void {
+  return (progress: DeputadoHistoryProgress): void => {
+    if (progress.stage === "started") {
+      console.log(
+        JSON.stringify({
+          event: "crawler.deputados.history.started",
+          page,
+          total: progress.total,
+        }),
+      );
+      return;
+    }
+
+    if (progress.stage === "failed") {
+      console.error(
+        JSON.stringify({
+          event: "crawler.deputados.history.failed",
+          page,
+          completed: progress.completed,
+          total: progress.total,
+          deputadoId: progress.deputadoId,
+          error:
+            progress.error instanceof Error
+              ? progress.error.message
+              : String(progress.error),
+        }),
+      );
+      return;
+    }
+
+    if (
+      progress.completed % HISTORY_PROGRESS_INTERVAL === 0 ||
+      progress.completed === progress.total
+    ) {
+      console.log(
+        JSON.stringify({
+          event: "crawler.deputados.history.progress",
+          page,
+          completed: progress.completed,
+          total: progress.total,
+        }),
+      );
+    }
+  };
+}
+
 export async function runDeputados(args: readonly string[]): Promise<void> {
   const options: Options = parseDeputadoOptions(args);
   const env = loadCamaraEnv();
@@ -102,28 +158,135 @@ export async function runDeputados(args: readonly string[]): Promise<void> {
   const gateway: HttpCamaraGateway = new HttpCamaraGateway(
     new CamaraHttpClient(scheduler, DEFAULT_OPTIONS),
   );
+  const prepareDeputadosPage: PrepareDeputadosPage = new PrepareDeputadosPage(
+    gateway,
+  );
 
   let database: DatabaseHandle | undefined;
   let sync: SyncDeputados | undefined;
+  let syncLegislaturas: SyncLegislaturas | undefined;
+  let syncPartidos: SyncPartidos | undefined;
   if (options.persist) {
     const databaseUrl: string | undefined = process.env["DATABASE_URL"];
     if (databaseUrl === undefined || databaseUrl.trim() === "") {
       throw new Error("DATABASE_URL é obrigatória para usar --persist");
     }
     database = createDatabase(databaseUrl);
-    sync = new SyncDeputados(
+    const rawStore: DrizzleRawPayloadStore = new DrizzleRawPayloadStore(
+      database.db,
+    );
+    syncLegislaturas = new SyncLegislaturas(
       gateway,
-      new DrizzleRawPayloadStore(database.db),
+      rawStore,
+      new DrizzleLegislaturaRepository(database.db),
+    );
+    syncPartidos = new SyncPartidos(
+      gateway,
+      rawStore,
+      new DrizzlePartidoRepository(database.db),
+    );
+    sync = new SyncDeputados(
+      prepareDeputadosPage,
+      rawStore,
       new DrizzleDeputadoRepository(database.db),
     );
   }
 
   try {
+    const knownPartidos: Map<number, string> = new Map<number, string>();
+    let legislaturaCount: number;
+    if (syncLegislaturas !== undefined) {
+      const result = await syncLegislaturas.executePage(
+        1,
+        options.legislaturaId,
+      );
+      legislaturaCount = result.fetched;
+    } else {
+      const page = await gateway.listLegislaturas({
+        pagina: 1,
+        id: options.legislaturaId,
+      });
+      page.items.map(mapLegislatura);
+      legislaturaCount = page.items.length;
+      if (page.items.some((item) => item.id !== options.legislaturaId)) {
+        throw new Error(
+          `A API retornou uma legislatura diferente de ${options.legislaturaId}`,
+        );
+      }
+    }
+    if (legislaturaCount !== 1) {
+      throw new Error(
+        `Legislatura ${options.legislaturaId} não foi encontrada de forma única na API`,
+      );
+    }
+
+    let partyPageNumber: number = 1;
+    let partyHasNext: boolean;
+    let partyCount: number = 0;
+    do {
+      if (syncPartidos !== undefined) {
+        const result = await syncPartidos.executePage(
+          options.legislaturaId,
+          partyPageNumber,
+        );
+        result.partidos.forEach(({ id, sigla }) =>
+          knownPartidos.set(id, sigla),
+        );
+        partyCount += result.fetched;
+        partyHasNext = result.hasNext;
+        console.log(
+          JSON.stringify({
+            event: "crawler.partidos.page",
+            page: result.page,
+            fetched: result.fetched,
+            written: result.written,
+            unchanged: result.unchanged,
+            hasNext: partyHasNext,
+            persist: true,
+          }),
+        );
+      } else {
+        const page = await gateway.listPartidos({
+          idLegislatura: options.legislaturaId,
+          pagina: partyPageNumber,
+        });
+        const mapped = page.items.map((dto) =>
+          mapPartido(dto, options.legislaturaId),
+        );
+        mapped.forEach(({ partido }) =>
+          knownPartidos.set(partido.id, partido.sigla),
+        );
+        partyCount += mapped.length;
+        partyHasNext = page.hasNext;
+        console.log(
+          JSON.stringify({
+            event: "crawler.partidos.page",
+            page: page.page,
+            requestKey: page.requestKey,
+            fetched: page.items.length,
+            validated: mapped.length,
+            hasNext: partyHasNext,
+            persist: false,
+          }),
+        );
+      }
+
+      partyPageNumber++;
+      if (partyHasNext && partyPageNumber > MAX_PAGES) {
+        throw new Error(
+          `Sincronização de partidos passou de ${MAX_PAGES} páginas`,
+        );
+      }
+    } while (partyHasNext);
+
     let pageNumber: number = 1;
     let fetched: number = 0;
     let validated: number = 0;
     let written: number = 0;
     let unchanged: number = 0;
+    let duplicateRecords: number = 0;
+    let partyAffiliations: number = 0;
+    const seenDeputadoIds: Set<number> = new Set();
     let hasNext: boolean;
 
     do {
@@ -131,9 +294,17 @@ export async function runDeputados(args: readonly string[]): Promise<void> {
         const result = await sync.executePage(
           options.legislaturaId,
           pageNumber,
+          knownPartidos,
+          seenDeputadoIds,
+          reportHistoryProgress(pageNumber),
+        );
+        result.deputadoIds.forEach((deputadoId) =>
+          seenDeputadoIds.add(deputadoId),
         );
         fetched += result.fetched;
-        validated += result.fetched;
+        validated += result.validated;
+        duplicateRecords += result.duplicateRecords;
+        partyAffiliations += result.partyAffiliations;
         written += result.written;
         unchanged += result.unchanged;
         hasNext = result.hasNext;
@@ -142,6 +313,9 @@ export async function runDeputados(args: readonly string[]): Promise<void> {
             event: "crawler.deputados.page",
             page: result.page,
             fetched: result.fetched,
+            validated: result.validated,
+            duplicateRecords: result.duplicateRecords,
+            partyAffiliations: result.partyAffiliations,
             written: result.written,
             unchanged: result.unchanged,
             hasNext,
@@ -149,36 +323,51 @@ export async function runDeputados(args: readonly string[]): Promise<void> {
           }),
         );
       } else {
-        const page: Page<DeputadoDto> = await gateway.listDeputados({
-          idLegislatura: options.legislaturaId,
-          pagina: pageNumber,
-        });
-        const mapped = page.items.map((dto: DeputadoDto) =>
-          mapDeputado(dto, options.legislaturaId),
+        const prepared = await prepareDeputadosPage.execute(
+          options.legislaturaId,
+          pageNumber,
+          knownPartidos,
+          seenDeputadoIds,
+          reportHistoryProgress(pageNumber),
         );
-        fetched += page.items.length;
-        validated += mapped.length;
-        hasNext = page.hasNext;
+        prepared.deputadoIds.forEach((deputadoId) =>
+          seenDeputadoIds.add(deputadoId),
+        );
+        const pageAffiliations: number = prepared.historicos.reduce(
+          (count, history) => count + history.vigencias.length,
+          0,
+        );
+        fetched += prepared.fetched;
+        validated += prepared.deputados.length;
+        duplicateRecords += prepared.duplicateRecords;
+        partyAffiliations += pageAffiliations;
+        hasNext = prepared.hasNext;
         console.log(
           JSON.stringify({
             event: "crawler.deputados.page",
-            page: page.page,
-            requestKey: page.requestKey,
-            fetched: page.items.length,
-            validated: mapped.length,
+            page: prepared.page,
+            requestKey: prepared.requestKey,
+            fetched: prepared.fetched,
+            validated: prepared.deputados.length,
+            duplicateRecords: prepared.duplicateRecords,
+            partyAffiliations: pageAffiliations,
             hasNext,
             persist: false,
           }),
         );
 
-        if (pageNumber === 1 && mapped.length > 0) {
+        if (pageNumber === 1 && prepared.deputados.length > 0) {
+          const sample = prepared.deputados[0];
+          const history = prepared.historicos.find(
+            (item) => item.deputadoId === sample?.deputado.id,
+          );
           console.log(
             JSON.stringify(
               {
                 event: "crawler.deputados.sample",
-                deputado: mapped[0].deputado,
-                legislatura: mapped[0].legislatura,
-                source: page.items[0],
+                deputado: sample?.deputado,
+                legislatura: sample?.legislatura,
+                partidoHistorico: history?.vigencias,
               },
               null,
               2,
@@ -194,9 +383,13 @@ export async function runDeputados(args: readonly string[]): Promise<void> {
       JSON.stringify({
         event: "crawler.deputados.completed",
         legislaturaId: options.legislaturaId,
+        legislaturas: legislaturaCount,
+        partidos: partyCount,
         pages: pageNumber - 1,
         fetched,
         validated,
+        duplicateRecords,
+        partyAffiliations,
         written,
         unchanged,
         truncated: hasNext,
