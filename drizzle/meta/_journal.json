@@ -50,6 +50,20 @@
       "when": 1793217315504,
       "tag": "0006_bilhete_associations",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793218570684,
+      "tag": "0007_deputado_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793218652727,
+      "tag": "0008_deputado_status_snapshot",
+      "breakpoints": true
     }
   ]
 }

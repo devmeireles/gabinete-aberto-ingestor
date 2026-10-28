@@ -4,12 +4,13 @@ import type {
   DeputadoRepository,
 } from "@/application/ports/deputado-repository";
 import type { UpsertResult } from "@/application/ports/legislatura-repository";
-import type { Deputado } from "@/domain/model/deputado";
+import type { Deputado, DeputadoDetalhe } from "@/domain/model/deputado";
 import { canonicalHash } from "@/shared/canonical-hash";
 import type { Database } from "./client";
 import {
   deputadoLegislaturas,
   deputadoPartidoVigencias,
+  deputadoDetalhes,
   deputados,
 } from "./schema";
 
@@ -163,5 +164,66 @@ export class DrizzleDeputadoRepository implements DeputadoRepository {
         unchanged: items.length - changedIds.size,
       };
     });
+  }
+
+  async upsertDetalhe(
+    detalhe: DeputadoDetalhe,
+    sourcePayloadId: number,
+  ): Promise<void> {
+    const { deputadoId, gabinete, ...fields } = detalhe;
+    const row = {
+      deputadoId,
+      ...fields,
+      gabineteNome: gabinete.nome,
+      gabinetePredio: gabinete.predio,
+      gabineteSala: gabinete.sala,
+      gabineteAndar: gabinete.andar,
+      gabineteTelefone: gabinete.telefone,
+      gabineteEmail: gabinete.email,
+      rowHash: canonicalHash(detalhe),
+      sourcePayloadId,
+    };
+
+    await this.db
+      .insert(deputadoDetalhes)
+      .values(row)
+      .onConflictDoUpdate({
+        target: deputadoDetalhes.deputadoId,
+        set: {
+          nomeCivil: sql`excluded.nome_civil`,
+          cpf: sql`excluded.cpf`,
+          sexo: sql`excluded.sexo`,
+          urlWebsite: sql`excluded.url_website`,
+          redesSociais: sql`excluded.redes_sociais`,
+          dataNascimento: sql`excluded.data_nascimento`,
+          dataFalecimento: sql`excluded.data_falecimento`,
+          ufNascimento: sql`excluded.uf_nascimento`,
+          municipioNascimento: sql`excluded.municipio_nascimento`,
+          escolaridade: sql`excluded.escolaridade`,
+          statusLegislaturaId: sql`excluded.status_legislatura_id`,
+          statusNome: sql`excluded.status_nome`,
+          statusUri: sql`excluded.status_uri`,
+          nomeEleitoral: sql`excluded.nome_eleitoral`,
+          siglaPartido: sql`excluded.sigla_partido`,
+          uriPartido: sql`excluded.uri_partido`,
+          siglaUf: sql`excluded.sigla_uf`,
+          urlFoto: sql`excluded.url_foto`,
+          email: sql`excluded.email`,
+          dataStatus: sql`excluded.data_status`,
+          situacao: sql`excluded.situacao`,
+          condicaoEleitoral: sql`excluded.condicao_eleitoral`,
+          descricaoStatus: sql`excluded.descricao_status`,
+          gabineteNome: sql`excluded.gabinete_nome`,
+          gabinetePredio: sql`excluded.gabinete_predio`,
+          gabineteSala: sql`excluded.gabinete_sala`,
+          gabineteAndar: sql`excluded.gabinete_andar`,
+          gabineteTelefone: sql`excluded.gabinete_telefone`,
+          gabineteEmail: sql`excluded.gabinete_email`,
+          rowHash: sql`excluded.row_hash`,
+          sourcePayloadId: sql`excluded.source_payload_id`,
+          updatedAt: sql`now()`,
+        },
+        setWhere: sql`${deputadoDetalhes.rowHash} IS DISTINCT FROM excluded.row_hash`,
+      });
   }
 }

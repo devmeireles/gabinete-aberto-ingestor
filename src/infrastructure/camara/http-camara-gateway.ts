@@ -1,8 +1,10 @@
 import type {
   DeputadoGateway,
   DeputadoDto,
+  DeputadoDetalheDto,
   DeputadoHistoricoDto,
   ListDeputadosQuery,
+  Resource,
 } from "@/application/ports/camara-gateway/deputados";
 import type {
   DespesaGateway,
@@ -93,6 +95,16 @@ export class HttpCamaraGateway
     const response: CamaraResponse<DeputadoHistoricoDto[]> =
       await this.http.getJson(`deputados/${deputadoId}/historico`);
     return this.toPage(response, 1);
+  }
+
+  async getDeputado(deputadoId: number): Promise<Resource<DeputadoDetalheDto>> {
+    const response: CamaraResponse<DeputadoDetalheDto> =
+      await this.http.getJson(`deputados/${deputadoId}`);
+    return {
+      item: response.envelope.dados,
+      requestKey: response.requestKey,
+      rawBody: response.envelope,
+    };
   }
 
   async listDespesas(query: ListDespesasQuery): Promise<Page<DespesaDto>> {

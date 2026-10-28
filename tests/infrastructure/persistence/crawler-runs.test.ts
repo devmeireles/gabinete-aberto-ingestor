@@ -32,17 +32,17 @@ describe("Inngest crawler run records", () => {
     };
 
     await expect(
-      runTrackedCrawler(repository, "sync-legislaturas", context, async () => ({
+      runTrackedCrawler(repository, "seed-legislaturas", context, async () => ({
         pages: 4,
         fetched: 57,
       })),
     ).resolves.toEqual({ pages: 4, fetched: 57 });
     await repository.start({
       ...context,
-      functionId: "sync-legislaturas",
+      functionId: "seed-legislaturas",
       attempt: 2,
     });
-    await repository.complete("sync-legislaturas", "run-success", {
+    await repository.complete("seed-legislaturas", "run-success", {
       pages: 4,
       fetched: 57,
     });
@@ -61,7 +61,7 @@ describe("Inngest crawler run records", () => {
     );
     expect(rows.rows).toEqual([
       {
-        function_id: "sync-legislaturas",
+        function_id: "seed-legislaturas",
         run_id: "run-success",
         event_name: "camara/legislaturas.seed",
         attempt: 2,

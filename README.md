@@ -68,20 +68,28 @@ apaga o volume local do PostgreSQL.
 ## Fluxo recomendado de ingestão
 
 1. **Carregue as legislaturas uma vez pelo Inngest.** A função
-   `sync-legislaturas` não tem cron: após iniciar o serviço e sincronizar as
+   `seed-legislaturas` não tem cron: após iniciar o serviço e sincronizar as
    funções no Inngest, envie pelo painel um evento com nome
    `camara/legislaturas.seed` e dados `{}`. Uma única execução percorre todas
    as páginas da API e faz upsert idempotente. Não é necessário repetir essa
    carga mensalmente.
-2. **Sincronize deputados da legislatura desejada.** A legislatura precisa
-   estar carregada no passo anterior. O crawler sincroniza os partidos como
-   pré-requisito e importa o histórico partidário de cada deputado.
-3. **Carregue os CSVs oficiais de passagens pelo Inngest.** Envie o evento
+2. **Carregue a lista de deputados pelo Inngest.** Envie
+   `camara/deputados.seed` com `{"legislaturaId": 57}` (substitua pelo ID
+   desejado). A legislatura deve estar carregada. Esse seed sincroniza
+   partidos, a lista e o histórico partidário, depois dispara eventos para a
+   segunda etapa.
+3. **Enriqueça os perfis em um seed separado.** Para cada deputado recebido,
+   `seed-perfis-deputados` consulta `/deputados/{id}` e grava os dados pessoais
+   e o snapshot de `ultimoStatus`. Os payloads brutos das listas, históricos e
+   detalhes também são preservados. Também é possível solicitar um perfil
+   individual enviando `camara/deputados.perfil.seed` com
+   `{"deputadoId": 218086}`.
+4. **Carregue os CSVs oficiais de passagens pelo Inngest.** Envie o evento
    `camara/bilhetes-aereos.seed` sem dados para importar todos os anos desde
    2008, ou informe `{"ano": 2025}` para carregar somente um ano. Os ZIPs são
    baixados da Câmara, extraídos em streaming e importados sem salvar arquivos
    localmente.
-4. **Sincronize despesas recentes ou faça backfill.** O comando consulta a API
+5. **Sincronize despesas recentes ou faça backfill.** O comando consulta a API
    por deputado, legislatura e mês. A reconciliação com passageiros e trechos
    usa os dados já importados no banco.
 
@@ -111,7 +119,7 @@ separado e baixa arquivos oficiais pelo Inngest.
 | `legislaturas` | `--dry-run`                             | Não         | Opcional, pois o CLI sempre é somente leitura.                                                                  |
 | `deputados`    | `--legislatura=<id>`                    | Sim         | ID positivo da legislatura.                                                                                     |
 | `deputados`    | `--pages=<n>`                           | Não         | Limite de 1 a 50 páginas; padrão `50`.                                                                          |
-| `deputados`    | `--dry-run` / `--persist`               | Não         | Dry-run padrão; persistência exige `DATABASE_URL` e migrations.                                                 |
+| `deputados`    | `--dry-run` / `--persist`               | Não         | Dry-run padrão; `--persist` grava a lista, o histórico e o detalhe de cada deputado; requer migrations.         |
 | `despesas`     | `--legislatura=<id>`                    | Sim         | ID positivo da legislatura.                                                                                     |
 | `despesas`     | `--deputado=<id>`                       | No dry-run  | Limita a consulta; no persist, se omitido, usa os deputados já cadastrados na legislatura.                      |
 | `despesas`     | `--ano=<AAAA>` e `--mes=<MM>`           | Não         | Devem ser usados juntos para sincronizar um mês.                                                                |
@@ -163,11 +171,42 @@ despesa mudarem, o bilhete associado é liberado para nova correspondência.
 
 ## Rotinas Inngest
 
-| Função                 | Disparo                                | Trabalho                                                                                       |
-| ---------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `sync-legislaturas`    | Evento `camara/legislaturas.seed`      | Percorre todas as páginas e grava as legislaturas.                                             |
-| `seed-bilhetes-aereos` | Evento `camara/bilhetes-aereos.seed`   | Sem payload importa de 2008 até o ano corrente; `{"ano": 2025}` importa somente aquele ano.    |
-| `sync-despesas`        | Domingo, às 03h no horário de Brasília | Atualiza os três meses mais recentes de todos os deputados cadastrados na legislatura vigente. |
+| Função                  | Disparo                                      | Trabalho                                                                                              |
+| ----------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `seed-legislaturas`     | Evento `camara/legislaturas.seed`            | Percorre todas as páginas e grava as legislaturas.                                                    |
+| `seed-deputados`        | Evento `camara/deputados.seed`               | Com `{"legislaturaId": 57}`, grava partidos, lista e histórico; dispara eventos para seed de perfis.   |
+| `seed-perfis-deputados` | Evento `camara/deputados.perfil.seed`        | Recebe `{"deputadoId": 218086}`, consulta `/deputados/{id}` e grava o perfil e o último status.       |
+| `seed-bilhetes-aereos`  | Evento `camara/bilhetes-aereos.seed`         | Sem payload importa de 2008 até o ano corrente; `{"ano": 2025}` importa somente aquele ano.           |
+| `sync-despesas`         | Domingo, às 03h no horário de Brasília       | Atualiza os três meses mais recentes de todos os deputados cadastrados na legislatura vigente.        |
+
+Exemplo de evento para carregar lista e enfileirar os seeds de perfil:
+
+```json
+{
+  "name": "camara/deputados.seed",
+  "data": {
+    "legislaturaId": 57
+  }
+}
+```
+
+Exemplo de evento de perfil individual (também emitido automaticamente pelo
+seed da lista):
+
+```json
+{
+  "name": "camara/deputados.perfil.seed",
+  "data": {
+    "deputadoId": 218086
+  }
+}
+```
+
+O perfil fica em `deputado_detalhes`, separado da identidade estável em
+`deputados` e do vínculo temporal em `deputado_legislaturas`. O campo
+`status_legislatura_id` identifica a legislatura do snapshot mais recente da
+API; alterações futuras atualizam esse snapshot e mantêm os payloads brutos
+para auditoria.
 
 O seed anual pode ser repetido com segurança. A importação e a reconciliação
 são etapas Inngest independentes para cada ano, limitando o trabalho de cada

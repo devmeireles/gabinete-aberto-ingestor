@@ -7,6 +7,7 @@ import {
 } from "@/application/use-cases/prepare-deputados-page";
 import { SyncDeputados } from "@/application/use-cases/sync-deputados";
 import { SyncPartidos } from "@/application/use-cases/sync-partidos";
+import { EnrichDeputado } from "@/application/use-cases/enrich-deputado";
 import {
   CamaraHttpClient,
   DEFAULT_OPTIONS,
@@ -165,6 +166,7 @@ export async function runDeputados(args: readonly string[]): Promise<void> {
   let database: DatabaseHandle | undefined;
   let sync: SyncDeputados | undefined;
   let syncPartidos: SyncPartidos | undefined;
+  let enrichDeputado: EnrichDeputado | undefined;
   if (options.persist) {
     const databaseUrl: string | undefined = process.env["DATABASE_URL"];
     if (databaseUrl === undefined || databaseUrl.trim() === "") {
@@ -179,11 +181,14 @@ export async function runDeputados(args: readonly string[]): Promise<void> {
       rawStore,
       new DrizzlePartidoRepository(database.db),
     );
+    const deputadoRepository: DrizzleDeputadoRepository =
+      new DrizzleDeputadoRepository(database.db);
     sync = new SyncDeputados(
       prepareDeputadosPage,
       rawStore,
-      new DrizzleDeputadoRepository(database.db),
+      deputadoRepository,
     );
+    enrichDeputado = new EnrichDeputado(gateway, rawStore, deputadoRepository);
   }
 
   try {
@@ -284,6 +289,7 @@ export async function runDeputados(args: readonly string[]): Promise<void> {
     let unchanged: number = 0;
     let duplicateRecords: number = 0;
     let partyAffiliations: number = 0;
+    let detailsEnriched: number = 0;
     const seenDeputadoIds: Set<number> = new Set();
     let hasNext: boolean;
 
@@ -306,6 +312,12 @@ export async function runDeputados(args: readonly string[]): Promise<void> {
         written += result.written;
         unchanged += result.unchanged;
         hasNext = result.hasNext;
+        if (enrichDeputado !== undefined) {
+          for (const deputadoId of result.deputadoIds) {
+            await enrichDeputado.execute(deputadoId);
+            detailsEnriched++;
+          }
+        }
         console.log(
           JSON.stringify({
             event: "crawler.deputados.page",
@@ -316,6 +328,10 @@ export async function runDeputados(args: readonly string[]): Promise<void> {
             partyAffiliations: result.partyAffiliations,
             written: result.written,
             unchanged: result.unchanged,
+            detailsEnriched:
+              enrichDeputado === undefined
+                ? undefined
+                : result.deputadoIds.length,
             hasNext,
             persist: true,
           }),
@@ -388,6 +404,7 @@ export async function runDeputados(args: readonly string[]): Promise<void> {
         validated,
         duplicateRecords,
         partyAffiliations,
+        detailsEnriched,
         written,
         unchanged,
         truncated: hasNext,

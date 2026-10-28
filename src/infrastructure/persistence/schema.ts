@@ -157,6 +157,59 @@ export const deputados = pgTable("deputados", {
     .defaultNow(),
 });
 
+export const deputadoDetalhes = pgTable(
+  "deputado_detalhes",
+  {
+    deputadoId: integer("deputado_id")
+      .primaryKey()
+      .references(() => deputados.id),
+    nomeCivil: text("nome_civil"),
+    cpf: text("cpf"),
+    sexo: text("sexo"),
+    urlWebsite: text("url_website"),
+    redesSociais: jsonb("redes_sociais")
+      .$type<readonly string[]>()
+      .notNull()
+      .default([]),
+    dataNascimento: date("data_nascimento", { mode: "string" }),
+    dataFalecimento: date("data_falecimento", { mode: "string" }),
+    ufNascimento: char("uf_nascimento", { length: 2 }),
+    municipioNascimento: text("municipio_nascimento"),
+    escolaridade: text("escolaridade"),
+    statusLegislaturaId: integer("status_legislatura_id")
+      .notNull()
+      .references(() => legislaturas.id),
+    statusNome: text("status_nome"),
+    statusUri: text("status_uri").notNull(),
+    nomeEleitoral: text("nome_eleitoral"),
+    siglaPartido: text("sigla_partido"),
+    uriPartido: text("uri_partido"),
+    siglaUf: char("sigla_uf", { length: 2 }),
+    urlFoto: text("url_foto"),
+    email: text("email"),
+    dataStatus: date("data_status", { mode: "string" }),
+    situacao: text("situacao"),
+    condicaoEleitoral: text("condicao_eleitoral"),
+    descricaoStatus: text("descricao_status"),
+    gabineteNome: text("gabinete_nome"),
+    gabinetePredio: text("gabinete_predio"),
+    gabineteSala: text("gabinete_sala"),
+    gabineteAndar: text("gabinete_andar"),
+    gabineteTelefone: text("gabinete_telefone"),
+    gabineteEmail: text("gabinete_email"),
+    rowHash: char("row_hash", { length: 64 }).notNull(),
+    sourcePayloadId: bigint("source_payload_id", { mode: "number" })
+      .notNull()
+      .references(() => rawPayloads.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("deputado_detalhes_status_legislatura_idx").on(t.statusLegislaturaId),
+  ],
+);
+
 /**
  * Contexto temporal do mandato. A filiação partidária tem vigências próprias
  * em deputado_partido_vigencias, pois pode mudar durante a legislatura.

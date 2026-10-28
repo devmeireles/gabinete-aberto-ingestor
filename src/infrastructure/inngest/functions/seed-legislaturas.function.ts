@@ -29,13 +29,13 @@ export interface SyncLegislaturasSummary {
  * - singleton "skip": se o run anterior ainda está ativo, o novo é ignorado
  *   (sem sobreposição de cargas concorrentes).
  */
-export function createSyncLegislaturasFunction(
+export function createSeedLegislaturasFunction(
   useCase: SyncLegislaturas,
   runRepository: CrawlerRunRepository,
 ) {
   return inngest.createFunction(
     {
-      id: "sync-legislaturas",
+      id: "seed-legislaturas",
       triggers: [{ event: "camara/legislaturas.seed" }],
       retries: 5,
       concurrency: CAMARA_API_CONCURRENCY,
@@ -44,7 +44,7 @@ export function createSyncLegislaturasFunction(
     async ({ step, runId, attempt, event }): Promise<SyncLegislaturasSummary> =>
       runTrackedCrawler(
         runRepository,
-        "sync-legislaturas",
+        "seed-legislaturas",
         { runId, attempt, eventName: event.name },
         async (): Promise<SyncLegislaturasSummary> => {
           let pagina: number = 1;
@@ -65,7 +65,7 @@ export function createSyncLegislaturasFunction(
             if (!result.hasNext) break;
             if (pagina >= MAX_PAGES) {
               throw new Error(
-                `sync-legislaturas passou de ${MAX_PAGES} páginas: abortando`,
+                `seed-legislaturas passou de ${MAX_PAGES} páginas: abortando`,
               );
             }
             pagina++;

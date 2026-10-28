@@ -29,6 +29,7 @@ describe("PrepareDeputadosPage history progress", () => {
   it("reports history request totals and completed records", async () => {
     const gateway: DeputadoGateway = {
       listDeputados: vi.fn(async () => page([deputado], "/deputados")),
+      getDeputado: vi.fn(),
       getDeputadoHistorico: vi.fn(async () =>
         page([], "/deputados/100/historico"),
       ),
@@ -60,6 +61,7 @@ describe("PrepareDeputadosPage history progress", () => {
     const historyError = new Error("API indisponível");
     const gateway: DeputadoGateway = {
       listDeputados: vi.fn(async () => page([deputado], "/deputados")),
+      getDeputado: vi.fn(),
       getDeputadoHistorico: vi.fn(async () => {
         throw historyError;
       }),

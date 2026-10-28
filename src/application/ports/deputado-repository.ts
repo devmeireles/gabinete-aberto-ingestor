@@ -1,5 +1,6 @@
 import type {
   Deputado,
+  DeputadoDetalhe,
   DeputadoLegislatura,
   DeputadoPartidoVigencia,
 } from "@/domain/model/deputado";
@@ -21,4 +22,8 @@ export interface DeputadoPageSnapshot {
 
 export interface DeputadoRepository {
   syncPage(snapshot: DeputadoPageSnapshot): Promise<UpsertResult>;
+  upsertDetalhe(
+    detalhe: DeputadoDetalhe,
+    sourcePayloadId: number,
+  ): Promise<void>;
 }
