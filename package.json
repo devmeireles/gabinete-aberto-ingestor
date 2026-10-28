@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/main.ts",
-    "crawler:dry-run": "tsx src/cli/dry-run-legislaturas.ts",
+    "crawler": "tsx src/cli/crawler.ts",
     "build": "tsc && tsc-alias --resolve-full-paths --resolve-full-extension .js",
     "start": "node dist/main.js",
     "format:fix": "prettier --write \"src/**/*.ts\"",

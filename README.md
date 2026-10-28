@@ -39,7 +39,7 @@ recomendada para produção e os valores de exemplo estão em
 | Comando | Descrição |
 | --- | --- |
 | `npm run dev` | Executa a aplicação em modo watch. |
-| `npm run crawler:dry-run` | Consulta e valida legislaturas sem persistir dados. |
+| `npm run crawler -- <módulo>` | Executa um crawler em dry-run por padrão; `--persist` grava. |
 | `npm run build` | Compila TypeScript para `dist/`. |
 | `npm start` | Executa a versão compilada. |
 | `npm test` | Executa os testes Vitest. |
@@ -48,8 +48,9 @@ recomendada para produção e os valores de exemplo estão em
 | `npm run format:check` | Verifica formatação com Prettier em `src/`. |
 | `npm run check` | Executa formatação, lint e verificação de tipos. |
 
-O schema Drizzle fica em `src/infrastructure/persistence/schema.ts` e a
-migração SQL inicial está em `drizzle/`.
+O schema Drizzle fica em `src/infrastructure/persistence/schema.ts` e as
+migrations em `drizzle/`. `drizzle.config.ts` usa `DATABASE_URL_DIRECT` para
+migrations quando disponível, com fallback para `DATABASE_URL`.
 
 ## Arquitetura
 
@@ -80,6 +81,10 @@ O contrato da API da Câmara está dividido em portas por recurso
 depender somente do que utiliza. `HttpCamaraGateway` implementa essas portas
 com o cliente HTTP compartilhado.
 
+A listagem de deputados usa páginas de 250 itens, ordenadas por nome, e segue
+o indicador `next` retornado pela API. A sincronização grava a identidade do
+deputado e sua associação temporal com a legislatura em transação.
+
 ## Fluxo e confiabilidade da ingestão
 
 1. A função Inngest agenda a sincronização de legislaturas no primeiro dia de
@@ -97,33 +102,63 @@ A persistência do payload bruto permite auditoria e reprocessamento. A
 concorrência local é complementada pelo limite configurado no Inngest para
 controlar a pressão global sobre a API.
 
-No estado atual, somente a sincronização de legislaturas está conectada ao
-agendamento e à persistência normalizada. Os contratos para os demais recursos
-já estão definidos, mas suas rotinas completas ainda precisam ser
-implementadas e conectadas.
+No estado atual, somente legislaturas está conectada ao agendamento Inngest.
+O crawler de deputados pode ser executado manualmente por legislatura; a
+sincronização de partidos e despesas ainda precisa ser implementada.
 
-### Testar o crawler sem gravar no banco
+O comando unificado aceita o módulo `legislaturas` ou `deputados`. O dry-run é
+o padrão; `--persist` habilita gravação e `--dry-run` pode ser informado
+explicitamente. Não combine os dois modos.
 
-Execute o dry-run contra a API aberta da Câmara:
+### Consultar e sincronizar legislaturas
 
 ```sh
-npm run crawler:dry-run
-npm run crawler:dry-run -- --pages=3
-npm run crawler:dry-run -- --legislatura=57
-npm run crawler:dry-run -- --legislatura=57 --pages=3
+npm run crawler -- legislaturas
+npm run crawler -- legislaturas --legislatura=57 --dry-run
+npm run crawler -- legislaturas --legislatura=57 --persist
 ```
 
-O comando lê `.env` se existir, mas não exige `DATABASE_URL`, não inicia o
-servidor/Inngest e não grava payloads nem dados normalizados. Por padrão,
-consulta uma página; `--pages` define o máximo (de 1 a 50). `--legislatura`
-filtra por um ID específico da API, por exemplo `57` ou futuramente `58`.
-O resultado informa as páginas lidas, os registros validados, a chave da
-requisição e se a leitura foi truncada por atingir o limite. Uma resposta HTTP
-inválida ou um registro fora do formato esperado encerra o comando com código
-diferente de zero. O comando imprime a entidade da legislatura e o objeto
-recebido da API em JSON formatado.
+O comando lê `.env` se existir e não exige `DATABASE_URL` no dry-run. Por
+padrão, percorre até 50 páginas; `--pages` limita o número de páginas e
+`--legislatura` filtra por um ID. Para gravar, informe `--persist` após aplicar
+as migrations; uma connection string `DATABASE_URL` válida é necessária.
 
-Esse teste exercita a comunicação real com a API, a paginação e a validação de
-legislaturas, mas não testa persistência PostgreSQL nem o agendamento do
-Inngest. Para testar gravação, use um PostgreSQL de desenvolvimento e execute a
-sincronização normal após aplicar as migrations.
+### Consultar e sincronizar deputados
+
+O comando exige o ID da legislatura e, por padrão, funciona como dry-run:
+
+```sh
+npm run crawler -- deputados --legislatura=57
+npm run crawler -- deputados --legislatura=57 --pages=2 --dry-run
+npm run crawler -- deputados --legislatura=57 --persist
+```
+
+O dry-run consulta e valida as páginas sem gravar no banco. `--pages` limita
+quantas páginas serão lidas (padrão: 50). Para persistir os dados e os payloads
+brutos, use `--persist` após configurar PostgreSQL e aplicar as migrations:
+
+```sh
+npm run db:migrate
+npm run crawler -- deputados --legislatura=57 --persist
+```
+
+A legislatura correspondente precisa existir na tabela `legislaturas` antes
+da sincronização, pois cada associação de deputado possui chave estrangeira
+para ela. O processo é idempotente e pode ser repetido: só altera registros
+normalizados quando os campos de negócio mudam.
+
+### Dry-run sem gravação
+
+Sem `--persist`, os dois comandos consultam e validam a API, imprimem um
+exemplo em JSON e reportam páginas e registros:
+
+```sh
+npm run crawler -- legislaturas --legislatura=57 --dry-run
+npm run crawler -- deputados --legislatura=57 --pages=1 --dry-run
+```
+
+No modo dry-run, não é necessária `DATABASE_URL` e nada é gravado. Informe
+`--persist` explicitamente somente após configurar PostgreSQL e aplicar as
+migrations. Erros HTTP ou dados inválidos resultam em código de saída
+diferente de zero. A rotina mensal do Inngest continua persistindo
+legislaturas automaticamente, independentemente destes comandos manuais.

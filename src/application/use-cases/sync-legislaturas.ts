@@ -37,14 +37,26 @@ export class SyncLegislaturas {
     private readonly repository: LegislaturaRepository,
   ) {}
 
-  async executePage(pagina: number): Promise<SyncPageResult> {
+  async executePage(
+    pagina: number,
+    legislaturaId?: number,
+  ): Promise<SyncPageResult> {
     const page: Page<LegislaturaDto> = await this.gateway.listLegislaturas({
       pagina,
+      ...(legislaturaId === undefined ? {} : { id: legislaturaId }),
     });
     const payloadId: number = await this.rawStore.save(
       page.requestKey,
       page.rawBody,
     );
+    if (
+      legislaturaId !== undefined &&
+      page.items.some((item) => item.id !== legislaturaId)
+    ) {
+      throw new Error(
+        `A API retornou uma legislatura diferente de ${legislaturaId}`,
+      );
+    }
 
     const entities: Legislatura[] = page.items.map(mapLegislatura);
     const result: UpsertResult = await this.repository.upsertMany(

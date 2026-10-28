@@ -27,6 +27,8 @@ import type {
 
 /** Máximo documentado pela API por requisição. */
 const PAGE_SIZE: number = 100;
+/** O endpoint de deputados permite até 250 itens; as próximas páginas usam links. */
+const DEPUTADOS_PAGE_SIZE: number = 250;
 
 /**
  * ADAPTER da porta CamaraGateway.
@@ -76,9 +78,9 @@ export class HttpCamaraGateway
       {
         idLegislatura: query.idLegislatura,
         pagina: query.pagina,
-        itens: PAGE_SIZE,
+        itens: DEPUTADOS_PAGE_SIZE,
         ordem: "ASC",
-        ordenarPor: "id",
+        ordenarPor: "nome",
       },
     );
     return this.toPage(response, query.pagina);
