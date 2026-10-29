@@ -27,6 +27,7 @@ describe("ImportBilhetesAereosCsv", () => {
       '"PASSAGEM AÉREA - SIGEPA";"0";"218086";"57";"2025";"4";"302323";"2025-04-08T12:00:00";"BFBWSI";"0";"0";"092.962.950/0016-0";"-391.23";"Eliane; de Sousa Alves";"BSB/CGH"\n' +
       '"PASSAGEM AÉREA - RPA";"0";"218086";"57";"2025";"4";"302324";"2025-04-08T12:00:00";"BFBWSJ";"0";"0";"092.962.950/0016-0";"391.23";"Eliane de Sousa Alves";"BSB/CGH"\n' +
       '"PASSAGEM AÉREA - REEMBOLSO";"0";"218086";"57";"2025";"4";"302325";"2025-04-08T12:00:00";"BFBWSK";"0";"0";"092.962.950/0016-0";"391.23";"Eliane de Sousa Alves";"BSB/CGH"\n' +
+      '"PASSAGEM AÉREA - MISSÃO OFICIAL";"0";"218086";"57";"2025";"4";"302326";"2025-04-08T12:00:00";"BFBWSL";"0";"0";"092.962.950/0016-0";"391.23";"Eliane de Sousa Alves";"BSB/CGH"\n' +
       '"OUTRA DESPESA";"0";"218086";"57";"2025";"4";"302324";"2025-04-08T12:00:00";"BFBWSJ";"0";"0";"092.962.950/0016-0";"10.00";"";""\n';
     await writeFile(filePath, `\uFEFF${header}${rows}`, "utf8");
 
@@ -54,9 +55,9 @@ describe("ImportBilhetesAereosCsv", () => {
     ).execute(filePath);
 
     expect(result).toEqual({
-      scanned: 4,
-      candidates: 3,
-      imported: 3,
+      scanned: 5,
+      candidates: 4,
+      imported: 4,
       enriched: 1,
       ambiguous: 0,
     });
@@ -75,7 +76,31 @@ describe("ImportBilhetesAereosCsv", () => {
       "PASSAGEM AÉREA - SIGEPA",
       "PASSAGEM AÉREA - RPA",
       "PASSAGEM AÉREA - REEMBOLSO",
+      "PASSAGEM AÉREA - MISSÃO OFICIAL",
     ]);
+  });
+
+  it("retains official-mission CSV rows with an empty document code and continues streaming", async () => {
+    const csv =
+      '"txtDescricao";"indTipoDocumento";"nuDeputadoId";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento";"txtPassageiro";"txtTrecho"\n' +
+      '"PASSAGEM AÉREA - MISSÃO OFICIAL";"0";"218086";"57";"2025";"4";"";"2025-04-08T12:00:00";"BFBWSL";"0";"0";"092.962.950/0016-0";"391.23";"Passenger";"BSB/CGH"\n' +
+      '"PASSAGEM AÉREA - MISSÃO OFICIAL";"0";"218086";"57";"2025";"4";"302326";"2025-04-08T12:00:00";"BFBWSM";"0";"0";"092.962.950/0016-0";"391.23";"Passenger";"CGH/BSB"\n';
+    const items = [];
+    for await (const item of new StreamingBilheteAereoCsvSource().readStream(
+      "Ano-2025.csv",
+      Readable.from([Buffer.from(csv)]),
+    )) {
+      items.push(item);
+    }
+    expect(items.map(({ codDocumento }) => codDocumento)).toEqual([
+      "",
+      "302326",
+    ]);
+    expect(items[0]).toMatchObject({
+      tipoDespesa: "PASSAGEM AÉREA - MISSÃO OFICIAL",
+      passageiro: "Passenger",
+      trecho: "BSB/CGH",
+    });
   });
 
   it("previews CSV candidates without requiring or calling a repository", async () => {

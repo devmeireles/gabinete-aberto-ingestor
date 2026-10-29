@@ -2,7 +2,7 @@ import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { runTrackedCrawler } from "@/application/use-cases/run-tracked-crawler";
 import { DrizzleCrawlerRunRepository } from "@/infrastructure/persistence/drizzle-crawler-run-repository";
-import { mapDespesa } from "@/application/mappers/despesa-mapper";
+import { prepareDespesasPage } from "@/application/use-cases/prepare-despesas-page";
 import { SyncDespesas } from "@/application/use-cases/sync-despesas";
 import type { DespesaDto } from "@/application/ports/camara-gateway/despesas";
 import type { Page } from "@/application/ports/camara-gateway/page";
@@ -19,7 +19,6 @@ import {
 } from "@/infrastructure/persistence/client";
 import { DrizzleDespesaRepository } from "@/infrastructure/persistence/drizzle-despesa-repository";
 import { DrizzleRawPayloadStore } from "@/infrastructure/persistence/drizzle-raw-payload-store";
-import type { Despesa } from "@/domain/model/despesa";
 
 const MAX_PAGES: number = 500;
 const MAX_MONTHS: number = 120;
@@ -317,20 +316,15 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
                 pagina: pageNumber,
                 ordem: "DESC",
               });
-              const expenses: readonly Despesa[] = page.items.map((dto) =>
-                mapDespesa(dto, deputadoId, options.legislaturaId!),
+              const { expenses, rejectedItems } = prepareDespesasPage(
+                page.items,
+                deputadoId,
+                options.legislaturaId!,
+                month.ano,
+                month.mes,
               );
-              if (
-                expenses.some(
-                  (expense) =>
-                    expense.ano !== month.ano || expense.mes !== month.mes,
-                )
-              ) {
-                throw new Error(
-                  "A API retornou despesas fora do mês solicitado",
-                );
-              }
-              fetched += expenses.length;
+              fetched += page.items.length;
+              conflicted += rejectedItems.length;
               hasNext = page.hasNext;
               console.log(
                 JSON.stringify({
@@ -343,6 +337,7 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
                   requestKey: page.requestKey,
                   fetched: page.items.length,
                   validated: expenses.length,
+                  conflicted: rejectedItems.length,
                   hasNext,
                   persist: false,
                 }),
@@ -352,7 +347,6 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
                   JSON.stringify(
                     {
                       event: "crawler.despesas.sample",
-                      source: page.items[0],
                       normalized: expenses[0],
                     },
                     null,

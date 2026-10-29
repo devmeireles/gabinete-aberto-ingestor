@@ -4,7 +4,7 @@ export interface DespesaDto {
   readonly ano: number;
   readonly mes: number;
   readonly tipoDespesa: string;
-  readonly codDocumento: string;
+  readonly codDocumento: string | null;
   readonly tipoDocumento: string;
   readonly codTipoDocumento: number;
   readonly dataDocumento: string | null;

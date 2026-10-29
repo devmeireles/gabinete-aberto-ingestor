@@ -19,6 +19,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type { Despesa } from "@/domain/model/despesa";
+import type { RejectedDespesaPayload } from "@/application/ports/despesa-repository";
 
 /**
  * CAMADA RAW
@@ -442,7 +443,7 @@ export const despesas = pgTable(
   ],
 );
 
-/** Variantes conflitantes da mesma chave na página, preservadas para revisão. */
+/** Variantes conflitantes e despesas sem identificação, preservadas para revisão. */
 export const despesaConflicts = pgTable(
   "despesa_conflicts",
   {
@@ -452,7 +453,9 @@ export const despesaConflicts = pgTable(
       .references(() => rawPayloads.id),
     naturalKey: text("natural_key").notNull(),
     rowHash: char("row_hash", { length: 64 }).notNull(),
-    payload: jsonb("payload").$type<Despesa>().notNull(),
+    payload: jsonb("payload")
+      .$type<Despesa | RejectedDespesaPayload>()
+      .notNull(),
     reason: text("reason").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

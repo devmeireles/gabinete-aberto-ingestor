@@ -9,6 +9,7 @@ const TICKET_TYPES: ReadonlySet<string> = new Set([
   "PASSAGEM AÉREA - REEMBOLSO",
   "PASSAGEM AÉREA - RPA",
   "PASSAGEM AÉREA - SIGEPA",
+  "PASSAGEM AÉREA - MISSÃO OFICIAL",
 ]);
 
 function required(record: Record<string, string>, field: string): string {
@@ -73,7 +74,9 @@ function mapCsvRow(
     mes: integerField(record, "numMes", 1, 12),
     tipoDespesa,
     codTipoDocumento: integerField(record, "indTipoDocumento", 0),
-    codDocumento: required(record, "ideDocumento"),
+    // Retain missing source IDs without inventing an identifier. Such tickets
+    // cannot match a normalized expense, which always has a document code.
+    codDocumento: optional(record, "ideDocumento"),
     dataDocumento: date.length === 16 ? `${date}:00` : date,
     numDocumento: required(record, "txtNumero"),
     parcela: integerField(record, "numParcela", 0),

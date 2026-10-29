@@ -444,6 +444,110 @@ describe("expense persistence and CSV reconciliation", () => {
     expect(raw.rows[0]?.count).toBe(2);
   });
 
+  it("quarantines missing API document codes and writes subsequent pages idempotently", async () => {
+    const db = drizzle(database, { schema });
+    const dto = {
+      ...fixtureExpenseDto(),
+      tipoDespesa: "PASSAGEM AÉREA - MISSÃO OFICIAL",
+    };
+    const invalid = { ...dto, codDocumento: null };
+    const sync = new SyncDespesas(
+      {
+        listDespesas: async ({ pagina }) => {
+          const items =
+            pagina === 1
+              ? [invalid, { ...dto, numDocumento: "valid" }]
+              : [invalid];
+          return {
+            items,
+            page: pagina,
+            hasNext: pagina === 1,
+            requestKey: `missing-code-page-${pagina}`,
+            rawBody: { dados: items },
+          };
+        },
+      },
+      new DrizzleRawPayloadStore(db),
+      new DrizzleDespesaRepository(db),
+    );
+    await expect(
+      sync.executeDeputadoMonth(218086, 57, 2023, 4),
+    ).resolves.toMatchObject({
+      pages: 2,
+      fetched: 3,
+      written: 1,
+      unchanged: 0,
+      conflicted: 2,
+    });
+    await expect(
+      sync.executeDeputadoMonth(218086, 57, 2023, 4),
+    ).resolves.toMatchObject({
+      pages: 2,
+      fetched: 3,
+      written: 0,
+      unchanged: 1,
+      conflicted: 2,
+    });
+    const quarantined = await database.query<{
+      reason: string;
+      payload: unknown;
+      source_payload_id: number;
+    }>(
+      "SELECT reason, payload, source_payload_id::int FROM despesa_conflicts ORDER BY id",
+    );
+    expect(quarantined.rows).toHaveLength(2);
+    for (const row of quarantined.rows) {
+      expect(row).toMatchObject({
+        reason: "missing_document_code",
+        payload: { ...invalid, deputadoId: 218086, legislaturaId: 57 },
+        source_payload_id: expect.any(Number),
+      });
+    }
+  });
+
+  it("enriches official-mission tickets but leaves tickets without document codes unassociated", async () => {
+    const repository = new DrizzleDespesaRepository(
+      drizzle(database, { schema }),
+    );
+    const ticket = {
+      ...csvTicket("BSB/CGH"),
+      tipoDespesa: "PASSAGEM AÉREA - MISSÃO OFICIAL",
+    };
+    const expense = mapDespesa(
+      {
+        ...fixtureExpenseDto(),
+        ...ticket,
+        tipoDocumento: "Nota Fiscal",
+        numRessarcimento: "0",
+        valorGlosa: 0,
+        valorLiquido: ticket.valorDocumento,
+        nomeFornecedor: "AZUL",
+        urlDocumento: null,
+      },
+      218086,
+      57,
+    );
+    const raw = await database.query<{ id: number }>(
+      "SELECT id FROM raw_payloads LIMIT 1",
+    );
+    await repository.upsertMany([expense], raw.rows[0]!.id);
+    await repository.importBilhetesCsv([
+      ticket,
+      { ...ticket, codDocumento: "", linha: ticket.linha + 1 },
+    ]);
+    expect(await repository.enrichFromBilhetesCsv()).toEqual({
+      enriched: 1,
+      ambiguous: 0,
+    });
+    const rows = await database.query(
+      "SELECT cod_documento, status FROM bilhetes_aereos_csv ORDER BY id",
+    );
+    expect(rows.rows).toEqual([
+      { cod_documento: ticket.codDocumento, status: "associated" },
+      { cod_documento: "", status: "available" },
+    ]);
+  });
+
   it("rolls back quarantine and propagates database failures", async () => {
     const db = drizzle(database, { schema });
     const repository = new DrizzleDespesaRepository(db);

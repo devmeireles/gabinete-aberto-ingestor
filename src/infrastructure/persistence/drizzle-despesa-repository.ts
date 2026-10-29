@@ -3,6 +3,8 @@ import type {
   CsvEnrichmentResult,
   DespesaSyncResult,
   DespesaRepository,
+  RejectedDespesa,
+  RejectedDespesaPayload,
 } from "@/application/ports/despesa-repository";
 import type { BilheteAereoCsv, Despesa } from "@/domain/model/despesa";
 import { canonicalHash } from "@/shared/canonical-hash";
@@ -21,7 +23,7 @@ function supplierKey(nome: string, cnpjCpf: string): string {
   return JSON.stringify([nome, cnpjCpf]);
 }
 
-function naturalKey(item: Despesa): string {
+function naturalKey(item: Despesa | RejectedDespesaPayload): string {
   return JSON.stringify([
     item.deputadoId,
     item.legislaturaId,
@@ -73,8 +75,9 @@ export class DrizzleDespesaRepository implements DespesaRepository {
   async upsertMany(
     items: readonly Despesa[],
     sourcePayloadId: number,
+    rejectedItems: readonly RejectedDespesa[] = [],
   ): Promise<DespesaSyncResult> {
-    if (items.length === 0) {
+    if (items.length === 0 && rejectedItems.length === 0) {
       return {
         written: 0,
         unchanged: 0,
@@ -83,9 +86,9 @@ export class DrizzleDespesaRepository implements DespesaRepository {
         conflicted: 0,
       };
     }
-    const scope = items[0]!;
+    const scope = items[0] ?? rejectedItems[0]!.payload;
     if (
-      items.some(
+      [...items, ...rejectedItems.map(({ payload }) => payload)].some(
         (item) =>
           item.deputadoId !== scope.deputadoId ||
           item.legislaturaId !== scope.legislaturaId ||
@@ -118,19 +121,26 @@ export class DrizzleDespesaRepository implements DespesaRepository {
     const expenses = [...uniqueItems.entries()]
       .filter(([key]) => !conflictingKeys.has(key))
       .map(([, item]) => item);
-    const conflicted = conflicts.length;
+    const quarantine = [
+      ...conflicts.map((payload) => ({
+        payload,
+        reason: "same_natural_key_different_content",
+      })),
+      ...rejectedItems,
+    ];
+    const conflicted = quarantine.length;
 
     return this.db.transaction(async (tx) => {
-      if (conflicts.length > 0) {
+      if (quarantine.length > 0) {
         await tx
           .insert(despesaConflicts)
           .values(
-            conflicts.map((item) => ({
+            quarantine.map(({ payload, reason }) => ({
               sourcePayloadId,
-              naturalKey: naturalKey(item),
-              rowHash: canonicalHash(item),
-              payload: item,
-              reason: "same_natural_key_different_content",
+              naturalKey: naturalKey(payload),
+              rowHash: canonicalHash(payload),
+              payload,
+              reason,
             })),
           )
           .onConflictDoNothing();
@@ -284,7 +294,7 @@ export class DrizzleDespesaRepository implements DespesaRepository {
       const enrichment = await this.applyEnrichment(tx, scope);
       return {
         written: changed.length,
-        unchanged: items.length - conflicted - changed.length,
+        unchanged: items.length - conflicts.length - changed.length,
         conflicted,
         ...enrichment,
       };

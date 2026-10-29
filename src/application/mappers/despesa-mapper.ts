@@ -1,7 +1,7 @@
 import type { DespesaDto } from "@/application/ports/camara-gateway/despesas";
 import type { Despesa } from "@/domain/model/despesa";
 
-function requireText(value: string, field: string): string {
+function requireText(value: string | null, field: string): string {
   if (typeof value !== "string" || value.trim() === "") {
     throw new Error(`Campo obrigatório inválido na despesa: ${field}`);
   }

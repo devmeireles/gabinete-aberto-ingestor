@@ -169,6 +169,49 @@ describe("local expense backfill persistence and run tracking", () => {
     expect(harness.end).toHaveBeenCalledTimes(2);
   });
 
+  it("completes tracked months with missing document codes and proceeds to other deputies", async () => {
+    const original = harness.listDespesas.getMockImplementation()!;
+    harness.listDespesas.mockImplementation(
+      async (query: ListDespesasQuery) => {
+        const page = await original(query);
+        if (query.idDeputado === 1 && query.mes === 3 && query.pagina === 1) {
+          const items = [
+            {
+              ...page.items[0],
+              tipoDespesa: "PASSAGEM AÉREA - MISSÃO OFICIAL",
+              codDocumento: null,
+            },
+          ];
+          return { ...page, items, rawBody: { dados: items } };
+        }
+        return page;
+      },
+    );
+    await runDespesas(backfillArgs);
+    const runs = await database.query<{
+      status: string;
+      summary: Record<string, unknown>;
+    }>("SELECT status, summary FROM crawler_runs ORDER BY id");
+    expect(runs.rows).toHaveLength(4);
+    expect(runs.rows.every(({ status }) => status === "completed")).toBe(true);
+    expect(runs.rows[0]?.summary).toMatchObject({
+      fetched: 2,
+      written: 1,
+      conflicted: 1,
+      pages: 2,
+    });
+    const quarantine = await database.query<{
+      payload: Record<string, unknown>;
+    }>(
+      "SELECT payload FROM despesa_conflicts WHERE reason = 'missing_document_code'",
+    );
+    expect(quarantine.rows).toHaveLength(1);
+    expect(quarantine.rows[0]?.payload).toMatchObject({
+      codDocumento: null,
+      tipoDespesa: "PASSAGEM AÉREA - MISSÃO OFICIAL",
+    });
+  });
+
   it("records a failed month before propagating the error and closes the pool", async () => {
     harness.listDespesas.mockImplementation(async () => {
       const rows = await database.query<{ status: string }>(

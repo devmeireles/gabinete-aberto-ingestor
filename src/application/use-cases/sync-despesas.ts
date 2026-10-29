@@ -1,4 +1,4 @@
-import { mapDespesa } from "@/application/mappers/despesa-mapper";
+import { prepareDespesasPage } from "./prepare-despesas-page";
 import type {
   DespesaDto,
   DespesaGateway,
@@ -64,16 +64,18 @@ export class SyncDespesas {
       page.requestKey,
       page.rawBody,
     );
-    const expenses = page.items.map((dto) =>
-      mapDespesa(dto, deputadoId, legislaturaId),
+    const { expenses, rejectedItems } = prepareDespesasPage(
+      page.items,
+      deputadoId,
+      legislaturaId,
+      ano,
+      mes,
     );
-    if (expenses.some((item) => item.ano !== ano || item.mes !== mes)) {
-      throw new Error(
-        `A API retornou despesas fora do período ${ano}-${String(mes).padStart(2, "0")}`,
-      );
-    }
-
-    const result = await this.repository.upsertMany(expenses, sourcePayloadId);
+    const result = await this.repository.upsertMany(
+      expenses,
+      sourcePayloadId,
+      rejectedItems,
+    );
     return {
       page: page.page,
       hasNext: page.hasNext,
