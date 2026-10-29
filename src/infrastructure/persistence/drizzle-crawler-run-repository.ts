@@ -53,7 +53,7 @@ export class DrizzleCrawlerRunRepository implements CrawlerRunRepository {
       .returning({ id: crawlerRuns.id });
     if (updated.length !== 1) {
       throw new Error(
-        `Execução Inngest ${functionId}/${runId} não foi registrada antes da conclusão`,
+        `Execução do crawler ${functionId}/${runId} não foi registrada antes da conclusão`,
       );
     }
   }
@@ -72,7 +72,7 @@ export class DrizzleCrawlerRunRepository implements CrawlerRunRepository {
       .returning({ id: crawlerRuns.id });
     if (updated.length !== 1) {
       throw new Error(
-        `Execução Inngest ${functionId}/${runId} não foi registrada antes da falha`,
+        `Execução do crawler ${functionId}/${runId} não foi registrada antes da falha`,
       );
     }
   }

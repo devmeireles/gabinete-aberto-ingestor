@@ -139,6 +139,48 @@ separado e baixa arquivos oficiais pelo Inngest.
 | `despesas`     | `--pages=<n>`                           | Não         | Limite de 1 a 500 páginas por período; padrão `500`.                                                            |
 | `despesas`     | `--dry-run` / `--persist`               | Não         | Dry-run padrão; no modo persistente, exige `DATABASE_URL` e migrations.                                         |
 
+### Backfill local de despesas com auditoria
+
+Para executar no terminal o equivalente ao evento
+`camara/despesas.backfill` com legislatura 57 e intervalo de março a abril
+de 2024:
+
+```sh
+npm run crawler -- despesas --legislatura=57 --desde=2024-03 --ate=2024-04 --persist
+```
+
+O comando grava no banco indicado por `DATABASE_URL` (também pode vir do
+`.env`). Aplique as migrations nesse banco antes de iniciar; legislaturas,
+deputados e vínculos com a legislatura devem estar cadastrados. Sem
+`--deputado`, processa todos os deputados cadastrados na legislatura, como
+o dispatcher do Inngest. Não é necessário iniciar o servidor nem configurar
+chaves do Inngest.
+
+No modo persistente, cada deputado/mês registra uma linha em `crawler_runs`
+com `function_id = 'cli-despesas-month'`, evento
+`cli/despesas.backfill.month`, `run_id` iniciado por `cli-` e `attempt = 1`.
+O status começa em `running`, termina em `completed` com resumo por mês
+(escopo, páginas e contadores, incluindo `conflicted`) ou em `failed` com
+a mensagem de erro. A lógica de auditoria é compartilhada com o Inngest;
+payloads brutos, despesas, quarentena e enriquecimento usam os mesmos casos
+de uso e repositórios. O dry-run não grava nem cria execuções.
+
+A execução local é sequencial e para no primeiro erro; os meses seguintes
+não são iniciados. Não há checkpoints, retries de jobs ou limite de
+concorrência global do Inngest. Uma nova invocação cria novas linhas de
+execução e reprocessa os dados de forma idempotente. Evite `--pages` para
+uma carga completa: ao atingir um limite com páginas pendentes, o comando
+interrompe a varredura e o resumo registra `truncated = true`.
+
+Para conferir as execuções locais:
+
+```sql
+SELECT run_id, status, started_at, finished_at, summary, error
+FROM crawler_runs
+WHERE function_id = 'cli-despesas-month'
+ORDER BY started_at DESC;
+```
+
 ### Exemplos de CLI
 
 Validar a API de legislaturas sem persistir:

@@ -1,4 +1,7 @@
 import "dotenv/config";
+import { randomUUID } from "node:crypto";
+import { runTrackedCrawler } from "@/application/use-cases/run-tracked-crawler";
+import { DrizzleCrawlerRunRepository } from "@/infrastructure/persistence/drizzle-crawler-run-repository";
 import { mapDespesa } from "@/application/mappers/despesa-mapper";
 import { SyncDespesas } from "@/application/use-cases/sync-despesas";
 import type { DespesaDto } from "@/application/ports/camara-gateway/despesas";
@@ -203,6 +206,7 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
   try {
     let repository: DrizzleDespesaRepository | undefined;
     let sync: SyncDespesas | undefined;
+    let runRepository: DrizzleCrawlerRunRepository | undefined;
     if (options.persist) {
       const databaseUrl: string | undefined = process.env["DATABASE_URL"];
       if (databaseUrl === undefined || databaseUrl.trim() === "") {
@@ -210,6 +214,7 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
       }
       database = createDatabase(databaseUrl);
       repository = new DrizzleDespesaRepository(database.db);
+      runRepository = new DrizzleCrawlerRunRepository(database.db);
     }
 
     const env = loadCamaraEnv();
@@ -253,103 +258,159 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
     let truncated: boolean = false;
     let samplePrinted: boolean = false;
 
+    const invocationId = randomUUID();
     for (const deputadoId of deputadoIds) {
       for (const month of months) {
-        let pageNumber: number = 1;
-        let hasNext: boolean;
-        do {
-          if (sync !== undefined) {
-            const result = await sync.executePage(
-              deputadoId,
-              options.legislaturaId!,
-              month.ano,
-              month.mes,
-              pageNumber,
-            );
-            fetched += result.fetched;
-            written += result.written;
-            unchanged += result.unchanged;
-            enriched += result.enriched;
-            ambiguous += result.ambiguous;
-            conflicted += result.conflicted;
-            hasNext = result.hasNext;
-            console.log(
-              JSON.stringify({
-                event: "crawler.despesas.page",
+        const before = {
+          pages,
+          fetched,
+          written,
+          unchanged,
+          enriched,
+          ambiguous,
+          conflicted,
+        };
+        const runId = `cli-${invocationId}-${deputadoId}-${month.ano}-${month.mes}`;
+        const executeMonth = async () => {
+          let pageNumber: number = 1;
+          let hasNext: boolean;
+          do {
+            if (sync !== undefined) {
+              const result = await sync.executePage(
                 deputadoId,
-                legislaturaId: options.legislaturaId,
-                ano: month.ano,
-                mes: month.mes,
-                page: result.page,
-                fetched: result.fetched,
-                written: result.written,
-                unchanged: result.unchanged,
-                enriched: result.enriched,
-                ambiguous: result.ambiguous,
-                conflicted: result.conflicted,
-                hasNext,
-                persist: true,
-              }),
-            );
-          } else {
-            const page: Page<DespesaDto> = await gateway.listDespesas({
-              idDeputado: deputadoId,
-              idLegislatura: options.legislaturaId!,
-              ano: month.ano,
-              mes: month.mes,
-              pagina: pageNumber,
-              ordem: "DESC",
-            });
-            const expenses: readonly Despesa[] = page.items.map((dto) =>
-              mapDespesa(dto, deputadoId, options.legislaturaId!),
-            );
-            if (
-              expenses.some(
-                (expense) =>
-                  expense.ano !== month.ano || expense.mes !== month.mes,
-              )
-            ) {
-              throw new Error("A API retornou despesas fora do mês solicitado");
-            }
-            fetched += expenses.length;
-            hasNext = page.hasNext;
-            console.log(
-              JSON.stringify({
-                event: "crawler.despesas.page",
-                deputadoId,
-                legislaturaId: options.legislaturaId,
-                ano: month.ano,
-                mes: month.mes,
-                page: page.page,
-                requestKey: page.requestKey,
-                fetched: page.items.length,
-                validated: expenses.length,
-                hasNext,
-                persist: false,
-              }),
-            );
-            if (!samplePrinted && expenses.length > 0) {
-              console.log(
-                JSON.stringify(
-                  {
-                    event: "crawler.despesas.sample",
-                    source: page.items[0],
-                    normalized: expenses[0],
-                  },
-                  null,
-                  2,
-                ),
+                options.legislaturaId!,
+                month.ano,
+                month.mes,
+                pageNumber,
               );
-              samplePrinted = true;
+              fetched += result.fetched;
+              written += result.written;
+              unchanged += result.unchanged;
+              enriched += result.enriched;
+              ambiguous += result.ambiguous;
+              conflicted += result.conflicted;
+              hasNext = result.hasNext;
+              console.log(
+                JSON.stringify({
+                  event: "crawler.despesas.page",
+                  deputadoId,
+                  legislaturaId: options.legislaturaId,
+                  ano: month.ano,
+                  mes: month.mes,
+                  page: result.page,
+                  fetched: result.fetched,
+                  written: result.written,
+                  unchanged: result.unchanged,
+                  enriched: result.enriched,
+                  ambiguous: result.ambiguous,
+                  conflicted: result.conflicted,
+                  hasNext,
+                  persist: true,
+                }),
+              );
+            } else {
+              const page: Page<DespesaDto> = await gateway.listDespesas({
+                idDeputado: deputadoId,
+                idLegislatura: options.legislaturaId!,
+                ano: month.ano,
+                mes: month.mes,
+                pagina: pageNumber,
+                ordem: "DESC",
+              });
+              const expenses: readonly Despesa[] = page.items.map((dto) =>
+                mapDespesa(dto, deputadoId, options.legislaturaId!),
+              );
+              if (
+                expenses.some(
+                  (expense) =>
+                    expense.ano !== month.ano || expense.mes !== month.mes,
+                )
+              ) {
+                throw new Error(
+                  "A API retornou despesas fora do mês solicitado",
+                );
+              }
+              fetched += expenses.length;
+              hasNext = page.hasNext;
+              console.log(
+                JSON.stringify({
+                  event: "crawler.despesas.page",
+                  deputadoId,
+                  legislaturaId: options.legislaturaId,
+                  ano: month.ano,
+                  mes: month.mes,
+                  page: page.page,
+                  requestKey: page.requestKey,
+                  fetched: page.items.length,
+                  validated: expenses.length,
+                  hasNext,
+                  persist: false,
+                }),
+              );
+              if (!samplePrinted && expenses.length > 0) {
+                console.log(
+                  JSON.stringify(
+                    {
+                      event: "crawler.despesas.sample",
+                      source: page.items[0],
+                      normalized: expenses[0],
+                    },
+                    null,
+                    2,
+                  ),
+                );
+                samplePrinted = true;
+              }
             }
-          }
-          pages++;
-          pageNumber++;
-          if (hasNext && pageNumber > options.pageLimit) {
-            truncated = true;
-            break;
-          }
-        } while (hasNext);
+            pages++;
+            pageNumber++;
+            if (hasNext && pageNumber > options.pageLimit) {
+              truncated = true;
+              break;
+            }
+          } while (hasNext);
+
+          return {
+            source: "cli",
+            deputadoId,
+            legislaturaId: options.legislaturaId!,
+            ...month,
+            pages: pages - before.pages,
+            fetched: fetched - before.fetched,
+            written: written - before.written,
+            unchanged: unchanged - before.unchanged,
+            enriched: enriched - before.enriched,
+            ambiguous: ambiguous - before.ambiguous,
+            conflicted: conflicted - before.conflicted,
+            truncated,
+          };
+        };
+        if (runRepository !== undefined) {
+          console.log(
+            JSON.stringify({
+              event: "crawler.despesas.month.started",
+              runId,
+              deputadoId,
+              legislaturaId: options.legislaturaId,
+              ...month,
+            }),
+          );
+          const summary = await runTrackedCrawler(
+            runRepository,
+            "cli-despesas-month",
+            { runId, attempt: 0, eventName: "cli/despesas.backfill.month" },
+            executeMonth,
+          );
+          console.log(
+            JSON.stringify({
+              event: "crawler.despesas.month.completed",
+              runId,
+              ...summary,
+            }),
+          );
+        } else {
+          await executeMonth();
+        }
         if (truncated) break;
       }
       if (truncated) break;
