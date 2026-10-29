@@ -24,6 +24,7 @@ export interface SyncDespesasSummary {
   readonly unchanged: number;
   readonly enriched: number;
   readonly ambiguous: number;
+  readonly conflicted: number;
 }
 
 function recentMonths(now: Date): readonly Month[] {
@@ -74,6 +75,7 @@ export function createSyncDespesasFunction(
           let unchanged: number = 0;
           let enriched: number = 0;
           let ambiguous: number = 0;
+          let conflicted: number = 0;
 
           for (const deputadoId of deputadoIds) {
             const results: readonly SyncDespesasMonthResult[] = await step.run(
@@ -99,6 +101,7 @@ export function createSyncDespesasFunction(
               unchanged += result.unchanged;
               enriched += result.enriched;
               ambiguous += result.ambiguous;
+              conflicted += result.conflicted;
             }
           }
 
@@ -111,6 +114,7 @@ export function createSyncDespesasFunction(
             unchanged,
             enriched,
             ambiguous,
+            conflicted,
           };
         },
       ),

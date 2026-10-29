@@ -15,8 +15,10 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  unique,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import type { Despesa } from "@/domain/model/despesa";
 
 /**
  * CAMADA RAW
@@ -418,21 +420,49 @@ export const despesas = pgTable(
         deputadoLegislaturas.legislaturaId,
       ],
     }),
-    uniqueIndex("despesas_natural_key_uq").on(
-      t.deputadoId,
-      t.legislaturaId,
-      t.ano,
-      t.mes,
-      t.codDocumento,
-      t.codLote,
-      t.parcela,
-      t.valorDocumento,
-      t.valorGlosa,
-      t.valorLiquido,
-    ),
+    unique("despesas_natural_key_uq")
+      .on(
+        t.deputadoId,
+        t.legislaturaId,
+        t.ano,
+        t.mes,
+        t.codDocumento,
+        t.codLote,
+        t.parcela,
+        t.valorDocumento,
+        t.valorGlosa,
+        t.valorLiquido,
+        t.numDocumento,
+        t.dataDocumento,
+      )
+      .nullsNotDistinct(),
     index("despesas_legislatura_periodo_idx").on(t.legislaturaId, t.ano, t.mes),
     index("despesas_tipo_despesa_idx").on(t.tipoDespesaId),
     index("despesas_fornecedor_idx").on(t.fornecedorId),
+  ],
+);
+
+/** Variantes conflitantes da mesma chave na página, preservadas para revisão. */
+export const despesaConflicts = pgTable(
+  "despesa_conflicts",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    sourcePayloadId: bigint("source_payload_id", { mode: "number" })
+      .notNull()
+      .references(() => rawPayloads.id),
+    naturalKey: text("natural_key").notNull(),
+    rowHash: char("row_hash", { length: 64 }).notNull(),
+    payload: jsonb("payload").$type<Despesa>().notNull(),
+    reason: text("reason").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("despesa_conflicts_source_hash_uq").on(
+      t.sourcePayloadId,
+      t.rowHash,
+    ),
   ],
 );
 

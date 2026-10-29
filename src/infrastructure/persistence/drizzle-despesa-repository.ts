@@ -4,7 +4,6 @@ import type {
   DespesaSyncResult,
   DespesaRepository,
 } from "@/application/ports/despesa-repository";
-import { DuplicateExpenseNaturalKeyError } from "@/application/errors/duplicate-expense-natural-key-error";
 import type { BilheteAereoCsv, Despesa } from "@/domain/model/despesa";
 import { canonicalHash } from "@/shared/canonical-hash";
 import type { Database } from "./client";
@@ -12,6 +11,7 @@ import {
   bilhetesAereosCsv,
   deputadoLegislaturas,
   despesas,
+  despesaConflicts,
   fornecedores,
   legislaturas,
   tiposDespesa,
@@ -33,6 +33,8 @@ function naturalKey(item: Despesa): string {
     item.valorDocumento,
     item.valorGlosa,
     item.valorLiquido,
+    item.numDocumento,
+    item.dataDocumento,
   ]);
 }
 
@@ -72,25 +74,18 @@ export class DrizzleDespesaRepository implements DespesaRepository {
     items: readonly Despesa[],
     sourcePayloadId: number,
   ): Promise<DespesaSyncResult> {
-    const uniqueItems = new Map<string, Despesa>();
-    for (const item of items) {
-      const key: string = naturalKey(item);
-      const existing: Despesa | undefined = uniqueItems.get(key);
-      if (
-        existing !== undefined &&
-        canonicalHash(existing) !== canonicalHash(item)
-      ) {
-        throw new DuplicateExpenseNaturalKeyError(key);
-      }
-      uniqueItems.set(key, item);
+    if (items.length === 0) {
+      return {
+        written: 0,
+        unchanged: 0,
+        enriched: 0,
+        ambiguous: 0,
+        conflicted: 0,
+      };
     }
-    const expenses: readonly Despesa[] = [...uniqueItems.values()];
-    if (expenses.length === 0) {
-      return { written: 0, unchanged: 0, enriched: 0, ambiguous: 0 };
-    }
-    const scope = expenses[0]!;
+    const scope = items[0]!;
     if (
-      expenses.some(
+      items.some(
         (item) =>
           item.deputadoId !== scope.deputadoId ||
           item.legislaturaId !== scope.legislaturaId ||
@@ -103,7 +98,52 @@ export class DrizzleDespesaRepository implements DespesaRepository {
       );
     }
 
+    const uniqueItems = new Map<string, Despesa>();
+    const conflictingKeys = new Set<string>();
+    for (const item of items) {
+      const key = naturalKey(item);
+      const existing = uniqueItems.get(key);
+      if (
+        existing !== undefined &&
+        canonicalHash(existing) !== canonicalHash(item)
+      ) {
+        conflictingKeys.add(key);
+      }
+      uniqueItems.set(key, item);
+    }
+    // Quarantine every variant of a conflicting group; never pick a winner.
+    const conflicts = items.filter((item) =>
+      conflictingKeys.has(naturalKey(item)),
+    );
+    const expenses = [...uniqueItems.entries()]
+      .filter(([key]) => !conflictingKeys.has(key))
+      .map(([, item]) => item);
+    const conflicted = conflicts.length;
+
     return this.db.transaction(async (tx) => {
+      if (conflicts.length > 0) {
+        await tx
+          .insert(despesaConflicts)
+          .values(
+            conflicts.map((item) => ({
+              sourcePayloadId,
+              naturalKey: naturalKey(item),
+              rowHash: canonicalHash(item),
+              payload: item,
+              reason: "same_natural_key_different_content",
+            })),
+          )
+          .onConflictDoNothing();
+      }
+      if (expenses.length === 0) {
+        return {
+          written: 0,
+          unchanged: 0,
+          enriched: 0,
+          ambiguous: 0,
+          conflicted,
+        };
+      }
       const categoryNames = [
         ...new Set(expenses.map((item) => item.tipoDespesa)),
       ];
@@ -203,6 +243,8 @@ export class DrizzleDespesaRepository implements DespesaRepository {
             despesas.valorDocumento,
             despesas.valorGlosa,
             despesas.valorLiquido,
+            despesas.numDocumento,
+            despesas.dataDocumento,
           ],
           set: {
             tipoDespesaId: sql`excluded.tipo_despesa_id`,
@@ -242,7 +284,8 @@ export class DrizzleDespesaRepository implements DespesaRepository {
       const enrichment = await this.applyEnrichment(tx, scope);
       return {
         written: changed.length,
-        unchanged: items.length - changed.length,
+        unchanged: items.length - conflicted - changed.length,
+        conflicted,
         ...enrichment,
       };
     });

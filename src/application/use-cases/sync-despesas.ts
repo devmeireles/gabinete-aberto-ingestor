@@ -17,6 +17,7 @@ export interface SyncDespesasPageResult {
   readonly unchanged: number;
   readonly enriched: number;
   readonly ambiguous: number;
+  readonly conflicted: number;
 }
 
 export interface SyncDespesasMonthResult {
@@ -26,6 +27,7 @@ export interface SyncDespesasMonthResult {
   readonly unchanged: number;
   readonly enriched: number;
   readonly ambiguous: number;
+  readonly conflicted: number;
 }
 
 export class SyncDespesas {
@@ -80,6 +82,7 @@ export class SyncDespesas {
       unchanged: result.unchanged,
       enriched: result.enriched,
       ambiguous: result.ambiguous,
+      conflicted: result.conflicted,
     };
   }
 
@@ -95,6 +98,7 @@ export class SyncDespesas {
     let unchanged: number = 0;
     let enriched: number = 0;
     let ambiguous: number = 0;
+    let conflicted: number = 0;
     let hasNext: boolean;
 
     do {
@@ -110,6 +114,7 @@ export class SyncDespesas {
       unchanged += result.unchanged;
       enriched += result.enriched;
       ambiguous += result.ambiguous;
+      conflicted += result.conflicted;
       hasNext = result.hasNext;
       pagina++;
       if (hasNext && pagina > MAX_PAGES_PER_MONTH) {
@@ -126,6 +131,7 @@ export class SyncDespesas {
       unchanged,
       enriched,
       ambiguous,
+      conflicted,
     };
   }
 }

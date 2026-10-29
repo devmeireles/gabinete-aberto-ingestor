@@ -222,6 +222,35 @@ Para processar um deputado específico, inclua seu ID:
 }
 ```
 
+A identidade de uma despesa inclui número e data do documento, além dos
+campos anteriores da chave. Datas ausentes são consideradas iguais para
+fins de unicidade (`UNIQUE NULLS NOT DISTINCT`, PostgreSQL 15 ou superior).
+Assim, documentos distintos com `codDocumento = "0"` e valores iguais podem
+ser armazenados separadamente.
+
+Se uma página ainda contiver conteúdos diferentes para a mesma chave, todas
+as variantes desse grupo são preservadas em `despesa_conflicts`, com chave,
+motivo e referência ao `raw_payloads`. As demais despesas da página são
+persistidas e a paginação continua. A quarentena e as despesas válidas são
+gravadas na mesma transação; falhas de banco continuam interrompendo a
+execução para permitir retry. Conflitos entre variantes de uma mesma página
+são isolados; atualizações de registros vindos de páginas diferentes mantêm
+a semântica de upsert existente.
+
+Os resultados por página/mês, os resumos do Inngest e os logs da CLI incluem
+`conflicted`: quantidade de linhas de entrada em quarentena, incluindo
+repetições. Esse contador não integra `unchanged`; portanto,
+`fetched = written + unchanged + conflicted`. A quarentena deduplica por
+payload de origem e hash do registro para permitir reexecuções.
+
+Aplique a migration `0014_expense_document_identity_and_conflicts` com
+`npm run db:migrate` antes de iniciar o worker atualizado. Para recuperar
+meses interrompidos anteriormente, envie novamente o evento de backfill
+para o deputado e período afetados. Os payloads brutos anteriores continuam
+preservados; o backfill consulta novamente a API. A mudança da chave pode
+manter versões adicionais quando número/data de documentos já persistidos
+forem corrigidos pela fonte; não remove registros antigos automaticamente.
+
 O evento coordenador informa quantos trabalhos foram enfileirados; cada
 combinação deputado/mês roda como execução própria, com retries e
 rastreabilidade. Se precisar de mais de 12 meses, divida a varredura em

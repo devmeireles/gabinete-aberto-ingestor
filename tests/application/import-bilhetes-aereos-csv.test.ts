@@ -37,6 +37,7 @@ describe("ImportBilhetesAereosCsv", () => {
       upsertMany: async () => ({
         written: 0,
         unchanged: 0,
+        conflicted: 0,
         enriched: 0,
         ambiguous: 0,
       }),
@@ -114,6 +115,7 @@ describe("ImportBilhetesAereosCsv", () => {
       upsertMany: async () => ({
         written: 0,
         unchanged: 0,
+        conflicted: 0,
         enriched: 0,
         ambiguous: 0,
       }),
@@ -145,6 +147,7 @@ describe("ImportBilhetesAereosCsv", () => {
       upsertMany: async () => ({
         written: 0,
         unchanged: 0,
+        conflicted: 0,
         enriched: 0,
         ambiguous: 0,
       }),

@@ -8,6 +8,7 @@ export interface CsvEnrichmentResult {
 }
 
 export interface DespesaSyncResult extends UpsertResult {
+  readonly conflicted: number;
   readonly enriched: number;
   readonly ambiguous: number;
 }

@@ -248,6 +248,7 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
     let unchanged: number = 0;
     let enriched: number = 0;
     let ambiguous: number = 0;
+    let conflicted: number = 0;
     let pages: number = 0;
     let truncated: boolean = false;
     let samplePrinted: boolean = false;
@@ -270,6 +271,7 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
             unchanged += result.unchanged;
             enriched += result.enriched;
             ambiguous += result.ambiguous;
+            conflicted += result.conflicted;
             hasNext = result.hasNext;
             console.log(
               JSON.stringify({
@@ -284,6 +286,7 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
                 unchanged: result.unchanged,
                 enriched: result.enriched,
                 ambiguous: result.ambiguous,
+                conflicted: result.conflicted,
                 hasNext,
                 persist: true,
               }),
@@ -364,6 +367,7 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
         unchanged,
         enriched,
         ambiguous,
+        conflicted,
         truncated,
         persist: options.persist,
       }),

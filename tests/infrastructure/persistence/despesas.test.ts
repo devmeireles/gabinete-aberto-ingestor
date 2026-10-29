@@ -3,7 +3,9 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mapDespesa } from "@/application/mappers/despesa-mapper";
-import { DuplicateExpenseNaturalKeyError } from "@/application/errors/duplicate-expense-natural-key-error";
+import { SyncDespesas } from "@/application/use-cases/sync-despesas";
+import type { DespesaDto } from "@/application/ports/camara-gateway/despesas";
+import { DrizzleRawPayloadStore } from "@/infrastructure/persistence/drizzle-raw-payload-store";
 import type { BilheteAereoCsv } from "@/domain/model/despesa";
 import { DrizzleDespesaRepository } from "@/infrastructure/persistence/drizzle-despesa-repository";
 import * as schema from "@/infrastructure/persistence/schema";
@@ -25,6 +27,10 @@ describe("expense persistence and CSV reconciliation", () => {
     await executeMigration(database, "0006_bilhete_associations.sql");
     await executeMigration(database, "0012_curly_black_tarantula.sql");
     await executeMigration(database, "0013_round_colossus.sql");
+    await executeMigration(
+      database,
+      "0014_expense_document_identity_and_conflicts.sql",
+    );
     await database.exec(`
       INSERT INTO legislaturas (id, uri, data_inicio, data_fim, row_hash)
       VALUES (57, 'https://dadosabertos.camara.leg.br/api/v2/legislaturas/57', '2023-02-01', '2027-01-31', repeat('a', 64));
@@ -270,7 +276,7 @@ describe("expense persistence and CSV reconciliation", () => {
     expect(rows.rows[0]?.count).toBe("2");
   });
 
-  it("rejects conflicting records that share a natural key", async () => {
+  it("quarantines all conflicting variants while writing unrelated expenses", async () => {
     const repository = new DrizzleDespesaRepository(
       drizzle(database, { schema }),
     );
@@ -301,16 +307,174 @@ describe("expense persistence and CSV reconciliation", () => {
       57,
     );
 
+    const conflict = { ...expense, nomeFornecedor: "Another supplier" };
+    const valid = { ...expense, codDocumento: "valid" };
+    const items = [expense, conflict, expense, valid, valid];
+    const sourcePayloadId = rawPayload.rows[0]!.id;
+    await expect(
+      repository.upsertMany(items, sourcePayloadId),
+    ).resolves.toMatchObject({
+      written: 1,
+      unchanged: 1,
+      conflicted: 3,
+    });
+    await expect(
+      repository.upsertMany(items, sourcePayloadId),
+    ).resolves.toMatchObject({
+      written: 0,
+      unchanged: 2,
+      conflicted: 3,
+    });
+    const rows = await database.query<{ cod_documento: string }>(
+      "SELECT cod_documento FROM despesas",
+    );
+    expect(rows.rows).toEqual([{ cod_documento: "valid" }]);
+    const quarantined = await database.query<{
+      source_payload_id: number;
+      natural_key: string;
+      payload: unknown;
+      reason: string;
+    }>(
+      "SELECT source_payload_id::int, natural_key, payload, reason FROM despesa_conflicts ORDER BY id",
+    );
+    expect(quarantined.rows).toHaveLength(2);
+    expect(quarantined.rows.map((row) => row.payload)).toEqual([
+      expense,
+      conflict,
+    ]);
+    expect(quarantined.rows[0]).toMatchObject({
+      source_payload_id: sourcePayloadId,
+      natural_key: expect.any(String),
+      reason: "same_natural_key_different_content",
+    });
+    await expect(
+      repository.upsertMany([expense, conflict], sourcePayloadId),
+    ).resolves.toEqual({
+      written: 0,
+      unchanged: 0,
+      conflicted: 2,
+      enriched: 0,
+      ambiguous: 0,
+    });
+  });
+
+  it("preserves the two reported phone bills and deduplicates missing document dates", async () => {
+    const repository = new DrizzleDespesaRepository(
+      drizzle(database, { schema }),
+    );
+    const makeExpense = (numDocumento: string, dataDocumento: string | null) =>
+      mapDespesa(
+        {
+          ...fixtureExpenseDto(),
+          numDocumento,
+          dataDocumento,
+        },
+        218086,
+        57,
+      );
+    const items = [
+      makeExpense("7564976", "2023-04-15T00:00:00"),
+      makeExpense("7611767", "2023-05-15T00:00:00"),
+      makeExpense("undated", null),
+      makeExpense("undated", "2023-04-15T00:00:00"),
+    ];
+    const raw = await database.query<{ id: number }>(
+      "SELECT id FROM raw_payloads LIMIT 1",
+    );
+    const sourcePayloadId = raw.rows[0]!.id;
+    await expect(
+      repository.upsertMany([...items, items[2]!], sourcePayloadId),
+    ).resolves.toMatchObject({
+      written: 4,
+      unchanged: 1,
+      conflicted: 0,
+    });
+    await expect(
+      repository.upsertMany(items, sourcePayloadId),
+    ).resolves.toMatchObject({
+      written: 0,
+      unchanged: 4,
+      conflicted: 0,
+    });
+    const rows = await database.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM despesas",
+    );
+    expect(rows.rows[0]?.count).toBe(4);
+  });
+
+  it("continues to later pages and retains raw payloads after a conflicting page", async () => {
+    const db = drizzle(database, { schema });
+    const dto = fixtureExpenseDto();
+    const requestedPages: number[] = [];
+    const sync = new SyncDespesas(
+      {
+        listDespesas: async ({ pagina }) => {
+          requestedPages.push(pagina);
+          const items =
+            pagina === 1
+              ? [dto, { ...dto, nomeFornecedor: "Conflicting supplier" }]
+              : [{ ...dto, numDocumento: "next-page" }];
+          return {
+            items,
+            page: pagina,
+            hasNext: pagina === 1,
+            requestKey: `fixture-page-${pagina}`,
+            rawBody: { dados: items },
+          };
+        },
+      },
+      new DrizzleRawPayloadStore(db),
+      new DrizzleDespesaRepository(db),
+    );
+    await expect(
+      sync.executeDeputadoMonth(218086, 57, 2023, 4),
+    ).resolves.toEqual({
+      pages: 2,
+      fetched: 3,
+      written: 1,
+      unchanged: 0,
+      conflicted: 2,
+      enriched: 0,
+      ambiguous: 0,
+    });
+    expect(requestedPages).toEqual([1, 2]);
+    const raw = await database.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM raw_payloads WHERE request_key LIKE 'fixture-page-%'",
+    );
+    expect(raw.rows[0]?.count).toBe(2);
+  });
+
+  it("rolls back quarantine and propagates database failures", async () => {
+    const db = drizzle(database, { schema });
+    const repository = new DrizzleDespesaRepository(db);
+    const expense = mapDespesa(fixtureExpenseDto(), 218086, 57);
+    const raw = await database.query<{ id: number }>(
+      "SELECT id FROM raw_payloads LIMIT 1",
+    );
+    await database.exec(`
+      CREATE FUNCTION reject_expense() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'fixture database failure'; END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER reject_expense BEFORE INSERT ON despesas
+      FOR EACH ROW EXECUTE FUNCTION reject_expense();
+    `);
     await expect(
       repository.upsertMany(
-        [expense, { ...expense, numDocumento: "different" }],
-        rawPayload.rows[0]!.id,
+        [
+          expense,
+          { ...expense, nomeFornecedor: "Conflicting supplier" },
+          { ...expense, numDocumento: "valid" },
+        ],
+        raw.rows[0]!.id,
       ),
-    ).rejects.toBeInstanceOf(DuplicateExpenseNaturalKeyError);
-    const rows = await database.query<{ count: string }>(
-      "SELECT count(*)::text AS count FROM despesas",
+    ).rejects.toThrow();
+    const counts = await database.query<{
+      conflicts: number;
+      expenses: number;
+    }>(
+      "SELECT (SELECT count(*)::int FROM despesa_conflicts) AS conflicts, (SELECT count(*)::int FROM despesas) AS expenses",
     );
-    expect(rows.rows[0]?.count).toBe("0");
+    expect(counts.rows[0]).toEqual({ conflicts: 0, expenses: 0 });
   });
 
   it("enforces the deputy-legislature relation", async () => {
@@ -489,4 +653,26 @@ async function executeMigration(
   for (const statement of statements) {
     await database.exec(statement);
   }
+}
+
+function fixtureExpenseDto(): DespesaDto {
+  return {
+    ano: 2023,
+    mes: 4,
+    tipoDespesa: "TELEFONIA",
+    codDocumento: "0",
+    tipoDocumento: "Nota Fiscal",
+    codTipoDocumento: 0,
+    dataDocumento: "2023-04-15T00:00:00",
+    numDocumento: "7564976",
+    parcela: 0,
+    numRessarcimento: "0",
+    codLote: 0,
+    nomeFornecedor: "CELULAR FUNCIONAL",
+    cnpjCpfFornecedor: "00000000000001",
+    valorDocumento: 235.8,
+    valorGlosa: 0,
+    valorLiquido: 235.8,
+    urlDocumento: null,
+  };
 }
