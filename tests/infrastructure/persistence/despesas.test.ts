@@ -24,6 +24,7 @@ describe("expense persistence and CSV reconciliation", () => {
     await executeMigration(database, "0005_silent_raider.sql");
     await executeMigration(database, "0006_bilhete_associations.sql");
     await executeMigration(database, "0012_curly_black_tarantula.sql");
+    await executeMigration(database, "0013_round_colossus.sql");
     await database.exec(`
       INSERT INTO legislaturas (id, uri, data_inicio, data_fim, row_hash)
       VALUES (57, 'https://dadosabertos.camara.leg.br/api/v2/legislaturas/57', '2023-02-01', '2027-01-31', repeat('a', 64));
@@ -218,6 +219,57 @@ describe("expense persistence and CSV reconciliation", () => {
     expect(rows.rows[0]?.count).toBe("1");
   });
 
+  it("preserves same-key expenses with different monetary values", async () => {
+    const repository = new DrizzleDespesaRepository(
+      drizzle(database, { schema }),
+    );
+    await database.exec(`
+      INSERT INTO deputados (id, nome, uri, row_hash)
+      VALUES (226553, 'Fixture Deputy', 'https://dadosabertos.camara.leg.br/api/v2/deputados/226553', repeat('e', 64));
+      INSERT INTO deputado_legislaturas (deputado_id, legislatura_id, row_hash)
+      VALUES (226553, 57, repeat('f', 64));
+    `);
+    const rawPayload = await database.query<{ id: number }>(
+      "SELECT id FROM raw_payloads WHERE request_key = 'fixture'",
+    );
+    const makeExpense = (valor: number) =>
+      mapDespesa(
+        {
+          ano: 2023,
+          mes: 9,
+          tipoDespesa: "PASSAGEM AÉREA - SIGEPA",
+          codDocumento: "186534",
+          tipoDocumento: "Nota Fiscal",
+          codTipoDocumento: 0,
+          dataDocumento: "2023-09-11T12:00:00",
+          numDocumento: "9572124755387",
+          parcela: 0,
+          numRessarcimento: "0",
+          codLote: 0,
+          nomeFornecedor: "TAM",
+          cnpjCpfFornecedor: "02012862000160",
+          valorDocumento: valor,
+          valorGlosa: 0,
+          valorLiquido: valor,
+          urlDocumento: null,
+        },
+        226553,
+        57,
+      );
+    const expenses = [makeExpense(59), makeExpense(1386.71)];
+
+    await expect(
+      repository.upsertMany(expenses, rawPayload.rows[0]!.id),
+    ).resolves.toMatchObject({ written: 2, unchanged: 0 });
+    await expect(
+      repository.upsertMany(expenses, rawPayload.rows[0]!.id),
+    ).resolves.toMatchObject({ written: 0, unchanged: 2 });
+    const rows = await database.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM despesas WHERE cod_documento = '186534'",
+    );
+    expect(rows.rows[0]?.count).toBe("2");
+  });
+
   it("rejects conflicting records that share a natural key", async () => {
     const repository = new DrizzleDespesaRepository(
       drizzle(database, { schema }),
@@ -251,7 +303,7 @@ describe("expense persistence and CSV reconciliation", () => {
 
     await expect(
       repository.upsertMany(
-        [expense, { ...expense, valorDocumento: -400, valorLiquido: -400 }],
+        [expense, { ...expense, numDocumento: "different" }],
         rawPayload.rows[0]!.id,
       ),
     ).rejects.toBeInstanceOf(DuplicateExpenseNaturalKeyError);

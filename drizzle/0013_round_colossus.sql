@@ -1,0 +1,2 @@
+DROP INDEX "despesas_natural_key_uq";--> statement-breakpoint
+CREATE UNIQUE INDEX "despesas_natural_key_uq" ON "despesas" USING btree ("deputado_id","legislatura_id","ano","mes","cod_documento","cod_lote","parcela","valor_documento","valor_glosa","valor_liquido");

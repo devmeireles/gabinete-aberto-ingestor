@@ -30,6 +30,9 @@ function naturalKey(item: Despesa): string {
     item.codDocumento,
     item.codLote,
     item.parcela,
+    item.valorDocumento,
+    item.valorGlosa,
+    item.valorLiquido,
   ]);
 }
 
@@ -197,6 +200,9 @@ export class DrizzleDespesaRepository implements DespesaRepository {
             despesas.codDocumento,
             despesas.codLote,
             despesas.parcela,
+            despesas.valorDocumento,
+            despesas.valorGlosa,
+            despesas.valorLiquido,
           ],
           set: {
             tipoDespesaId: sql`excluded.tipo_despesa_id`,

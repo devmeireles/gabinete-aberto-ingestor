@@ -92,6 +92,13 @@
       "when": 1793224218669,
       "tag": "0012_curly_black_tarantula",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793264197900,
+      "tag": "0013_round_colossus",
+      "breakpoints": true
     }
   ]
 }
