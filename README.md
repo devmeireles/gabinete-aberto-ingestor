@@ -1,7 +1,7 @@
 # Ingestor da Câmara dos Deputados
 
-Aplicação TypeScript que ingere dados abertos da Câmara, preserva os payloads
-originais e grava os dados normalizados em PostgreSQL.
+Aplicação TypeScript que ingere dados abertos da Câmara e grava os dados
+normalizados em PostgreSQL, sem manter cópias integrais dos payloads da API.
 
 ## Requisitos
 
@@ -21,15 +21,15 @@ Configure `DATABASE_URL` no `.env` com a connection string PostgreSQL da
 aplicação. Para migrations, configure também `DATABASE_URL_DIRECT` quando o
 banco exigir conexão direta. Não versione o `.env`.
 
-| Variável                 | Obrigatória           | Descrição                                                                       |
-| ------------------------ | --------------------- | ------------------------------------------------------------------------------- |
-| `DATABASE_URL`           | Sim                   | Connection string usada pelo serviço e pelos comandos `--persist`.              |
-| `DATABASE_URL_DIRECT`    | Não                   | Connection string direta, usada nas migrations; se omitida, usa `DATABASE_URL`. |
-| `PORT`                   | Não                   | Porta HTTP do serviço; padrão `8080`.                                           |
-| `CAMARA_MAX_CONCURRENT`  | Não                   | Requisições simultâneas à API por instância; padrão `2`.                        |
-| `CAMARA_MIN_INTERVAL_MS` | Não                   | Intervalo mínimo entre requisições; padrão `250` ms.                            |
-| `INNGEST_SIGNING_KEY`    | Produção              | Chave de assinatura do Inngest para validar chamadas recebidas.                 |
-| `INNGEST_EVENT_KEY`      | Produção              | Chave do Inngest necessária para publicar eventos entre as etapas dos seeds.     |
+| Variável                 | Obrigatória | Descrição                                                                       |
+| ------------------------ | ----------- | ------------------------------------------------------------------------------- |
+| `DATABASE_URL`           | Sim         | Connection string usada pelo serviço e pelos comandos `--persist`.              |
+| `DATABASE_URL_DIRECT`    | Não         | Connection string direta, usada nas migrations; se omitida, usa `DATABASE_URL`. |
+| `PORT`                   | Não         | Porta HTTP do serviço; padrão `8080`.                                           |
+| `CAMARA_MAX_CONCURRENT`  | Não         | Requisições simultâneas à API por instância; padrão `2`.                        |
+| `CAMARA_MIN_INTERVAL_MS` | Não         | Intervalo mínimo entre requisições; padrão `250` ms.                            |
+| `INNGEST_SIGNING_KEY`    | Produção    | Chave de assinatura do Inngest para validar chamadas recebidas.                 |
+| `INNGEST_EVENT_KEY`      | Produção    | Chave do Inngest necessária para publicar eventos entre as etapas dos seeds.    |
 
 Crie/atualize o schema do banco e inicie o serviço:
 
@@ -91,8 +91,7 @@ apaga o volume local do PostgreSQL.
    segunda etapa.
 4. **Enriqueça os perfis em um seed separado.** Para cada deputado recebido,
    `seed-perfis-deputados` consulta `/deputados/{id}` e grava os dados pessoais
-   e o snapshot de `ultimoStatus`. Os payloads brutos das listas, históricos e
-   detalhes também são preservados. Para reenriquecer todos os deputados já
+   e o snapshot de `ultimoStatus`. Para reenriquecer todos os deputados já
    cadastrados, envie `camara/deputados.perfil.seed` com dados `{}`; use
    `{"deputadoId": 218086}` para processar apenas um perfil.
 5. **Carregue os CSVs oficiais de passagens pelo Inngest.** Envie o evento
@@ -161,9 +160,9 @@ com `function_id = 'cli-despesas-month'`, evento
 `cli/despesas.backfill.month`, `run_id` iniciado por `cli-` e `attempt = 1`.
 O status começa em `running`, termina em `completed` com resumo por mês
 (escopo, páginas e contadores, incluindo `conflicted`) ou em `failed` com
-a mensagem de erro. A lógica de auditoria é compartilhada com o Inngest;
-payloads brutos, despesas, quarentena e enriquecimento usam os mesmos casos
-de uso e repositórios. O dry-run não grava nem cria execuções.
+a mensagem de erro. A lógica de persistência é compartilhada com o Inngest;
+despesas, quarentena e enriquecimento usam os mesmos casos de uso e
+repositórios. O dry-run não grava nem cria execuções.
 
 A execução local é sequencial e para no primeiro erro; os meses seguintes
 não são iniciados. Não há checkpoints, retries de jobs ou limite de
@@ -210,30 +209,89 @@ Backfill histórico inclusivo:
 npm run crawler -- despesas --legislatura=57 --desde=2023-02 --ate=2026-10 --persist
 ```
 
-O seed de passagens é executado exclusivamente pelo Inngest, nunca pela CLI.
-Os registros importados ficam em `bilhetes_aereos_csv`; ao gravar despesas, a
-aplicação reconcilia no banco sem baixar os arquivos novamente. Também é seguro
-executar o seed depois das despesas: a etapa final reconcilia as despesas já
-armazenadas. Valores negativos são preservados. Correspondências ambíguas não
-escolhem automaticamente passageiro ou trecho.
+O seed de passagens é executado pelo Inngest ou pela CLI. Ao persistir uma
+despesa, o sistema procura bilhetes correspondentes; ao importar o CSV, procura
+despesas correspondentes após a importação. Nos dois casos, grava passageiro e
+trecho na despesa e remove o bilhete somente quando a correspondência é única.
+Assim, é seguro importar o CSV antes ou depois das despesas. Valores negativos
+são preservados; correspondências ambíguas não escolhem passageiro ou trecho.
 
-Cada registro CSV mantém o status `available` até ser associado sem ambiguidade
-a uma despesa; nesse caso, passa para `associated` e guarda o ID da despesa.
-Assim, novas reconciliações priorizam o pool ainda disponível. Se os dados da
-despesa mudarem, o bilhete associado é liberado para nova correspondência.
+A tabela `bilhetes_aereos_csv` funciona como fila de reconciliação. Depois de
+uma correspondência única, passageiro e trecho ficam em `despesas` e as linhas
+CSV correspondentes são removidas na mesma transação. Não há FK, status ou ID
+de associação persistido entre as tabelas. Linhas sem correspondência, sem
+passageiro/trecho, com rotas conflitantes ou elegíveis para várias despesas são
+mantidas. Conflitos posteriores com dados já transferidos marcam a despesa como
+ambígua, limpam passageiro/trecho e preservam as novas linhas para revisão.
+
+Reimportar um bilhete já consumido é seguro: ele é reconciliado novamente sem
+reescrever a despesa se o conteúdo já estiver correto. Correções de URL e outros
+metadados preservam o enriquecimento; mudanças no tipo de despesa, tipo do
+documento ou fornecedor invalidam os campos transferidos. Como o bilhete foi
+consumido, pode ser necessário reimportar o CSV para reconciliar a nova
+identidade. Importação, upsert e reconciliação usam uma trava transacional comum
+para evitar consumo concorrente e confirmar transferência/remoção atomicamente.
+
+O job `sync-bilhetes-aereos` roda aos domingos às 04h de Brasília e também aceita:
+
+```json
+{ "name": "camara/bilhetes-aereos.sync", "data": { "ano": 2025 } }
+```
+
+Sem `ano`, processa todos os anos desde 2008. Cada ano é um step separado;
+`crawler_runs` registra a execução e os contadores `enriched`, `ambiguous` e
+`removed`. O seed CSV e o upsert de despesas também conciliam automaticamente.
+Para reconciliar pelo terminal, sem baixar CSVs nem iniciar o Inngest:
+
+```sh
+npm run crawler -- bilhetes --ano=2025 --persist
+```
+
+Para reimportar um ano com a identificação corrigida e depois reconciliar:
+
+```sh
+npm run crawler -- bilhetes --ano=2025 --import --persist
+```
+
+`--import` baixa o ZIP oficial, importa em streaming, substitui apenas cópias
+legadas verificadas e reconcilia o ano. Sem essa opção, o comando usa somente
+os bilhetes já armazenados. Logs mostram início, progresso da importação,
+bilhetes pendentes, registros inválidos ignorados (com amostras de linha e
+motivo) e quantos têm um deputado cadastrado. Um registro inválido não
+interrompe a importação; um cabeçalho sem colunas obrigatórias continua sendo
+erro de formato.
+
+Esse comando também preenche `crawler_runs`. O modo de escrita exige
+`--persist`; sem `--ano`, processa desde 2008.
+
+A importação usa `ideCadastro` como ID da API, conforme o
+[dicionário oficial da Câmara](https://dadosabertos.camara.leg.br/howtouse/2023-12-26-dados-ceap.html).
+`nuDeputadoId` identifica o deputado no sistema interno CEAP e não é intercambiável
+com o ID da API. Reimporte os anos carregados pelo parser anterior. A reimportação
+substitui uma linha com ID legado apenas se o arquivo/linha e todos os campos de
+negócio coincidirem, a cópia corrigida estiver armazenada e o ID legado não
+corresponder a um deputado cadastrado. Linhas não verificadas permanecem intactas.
+Registros de liderança sem `ideCadastro` não são candidatos a despesas individuais;
+a ausência da coluna no cabeçalho continua sendo erro de formato.
+
+Antes de publicar alterações de schema, faça backup e aplique as migrations
+pendentes com `npm run db:migrate`. Em mudanças incompatíveis, pause os jobs e
+atualize banco, workers e demais consumidores do schema coordenadamente; retome
+a ingestão depois de sincronizar as funções no Inngest.
 
 ## Rotinas Inngest
 
-| Função                  | Disparo                                      | Trabalho                                                                                              |
-| ----------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `seed-legislaturas`     | Evento `camara/legislaturas.seed`            | Percorre todas as páginas e grava as legislaturas.                                                    |
-| `seed-partidos`         | Evento `camara/partidos.seed`                | Com `{"legislaturaId": 57}`, grava a lista e dispara eventos de enriquecimento dos partidos.           |
-| `seed-perfis-partidos`  | Evento `camara/partidos.perfil.seed`         | Sem payload enriquece sequencialmente todos os partidos cadastrados; com `{"partidoId": 37906}`, processa somente um. |
-| `seed-deputados`        | Evento `camara/deputados.seed`               | Com `{"legislaturaId": 57}`, grava lista e histórico; dispara eventos para seed de perfis.             |
-| `seed-perfis-deputados` | Evento `camara/deputados.perfil.seed`        | Sem payload enriquece sequencialmente todos os deputados cadastrados; com `{"deputadoId": 218086}`, processa somente um. |
-| `seed-bilhetes-aereos`  | Evento `camara/bilhetes-aereos.seed`         | Sem payload importa de 2008 até o ano corrente; `{"ano": 2025}` importa somente aquele ano.           |
-| `sync-despesas`         | Domingo, às 03h no horário de Brasília       | Atualiza os três meses mais recentes de todos os deputados cadastrados na legislatura vigente.        |
-| `backfill-despesas`     | Evento `camara/despesas.backfill`            | Enfileira a varredura retroativa por deputado e mês; workers independentes processam e registram cada resultado. |
+| Função                  | Disparo                                         | Trabalho                                                                                                                 |
+| ----------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `seed-legislaturas`     | Evento `camara/legislaturas.seed`               | Percorre todas as páginas e grava as legislaturas.                                                                       |
+| `seed-partidos`         | Evento `camara/partidos.seed`                   | Com `{"legislaturaId": 57}`, grava a lista e dispara eventos de enriquecimento dos partidos.                             |
+| `seed-perfis-partidos`  | Evento `camara/partidos.perfil.seed`            | Sem payload enriquece sequencialmente todos os partidos cadastrados; com `{"partidoId": 37906}`, processa somente um.    |
+| `seed-deputados`        | Evento `camara/deputados.seed`                  | Com `{"legislaturaId": 57}`, grava lista e histórico; dispara eventos para seed de perfis.                               |
+| `seed-perfis-deputados` | Evento `camara/deputados.perfil.seed`           | Sem payload enriquece sequencialmente todos os deputados cadastrados; com `{"deputadoId": 218086}`, processa somente um. |
+| `seed-bilhetes-aereos`  | Evento `camara/bilhetes-aereos.seed`            | Sem payload importa de 2008 até o ano corrente; `{"ano": 2025}` importa somente aquele ano.                              |
+| `sync-bilhetes-aereos`  | Domingo às 04h ou `camara/bilhetes-aereos.sync` | Transfere passageiro/trecho e remove somente os bilhetes reconciliados; `ano` opcional.                                  |
+| `sync-despesas`         | Domingo, às 03h no horário de Brasília          | Atualiza os três meses mais recentes de todos os deputados cadastrados na legislatura vigente.                           |
+| `backfill-despesas`     | Evento `camara/despesas.backfill`               | Enfileira a varredura retroativa por deputado e mês; workers independentes processam e registram cada resultado.         |
 
 Para fazer uma varredura retroativa no Inngest, envie um evento com a
 legislatura e um intervalo inclusivo de até 12 meses. Sem `deputadoId`, serão
@@ -272,8 +330,9 @@ ser armazenados separadamente.
 
 Se uma página ainda contiver conteúdos diferentes para a mesma chave, todas
 as variantes desse grupo são preservadas em `despesa_conflicts`, com chave,
-motivo e referência ao `raw_payloads`. As demais despesas da página são
-persistidas e a paginação continua. A quarentena e as despesas válidas são
+motivo e o payload apenas das linhas conflitantes/rejeitadas. A chave natural
+e o hash deduplicam conflitos repetidos entre execuções. As demais despesas da
+página são persistidas e a paginação continua. A quarentena e as despesas válidas são
 gravadas na mesma transação; falhas de banco continuam interrompendo a
 execução para permitir retry. Conflitos entre variantes de uma mesma página
 são isolados; atualizações de registros vindos de páginas diferentes mantêm
@@ -282,16 +341,11 @@ a semântica de upsert existente.
 Os resultados por página/mês, os resumos do Inngest e os logs da CLI incluem
 `conflicted`: quantidade de linhas de entrada em quarentena, incluindo
 repetições. Esse contador não integra `unchanged`; portanto,
-`fetched = written + unchanged + conflicted`. A quarentena deduplica por
-payload de origem e hash do registro para permitir reexecuções.
+`fetched = written + unchanged + conflicted`. A quarentena deduplica pela
+chave natural e pelo hash do registro para permitir reexecuções.
 
-Aplique a migration `0014_expense_document_identity_and_conflicts` com
-`npm run db:migrate` antes de iniciar o worker atualizado. Para recuperar
-meses interrompidos anteriormente, envie novamente o evento de backfill
-para o deputado e período afetados. Os payloads brutos anteriores continuam
-preservados; o backfill consulta novamente a API. A mudança da chave pode
-manter versões adicionais quando número/data de documentos já persistidos
-forem corrigidos pela fonte; não remove registros antigos automaticamente.
+Para recuperar meses interrompidos, envie novamente o evento de backfill para
+o deputado e período afetados; o backfill consulta novamente a API.
 
 O evento coordenador informa quantos trabalhos foram enfileirados; cada
 combinação deputado/mês roda como execução própria, com retries e
@@ -374,8 +428,7 @@ O perfil fica em `deputado_detalhes`, separado da identidade estável em
 API. `last_fetched_at` registra toda consulta do perfil, mesmo quando os dados
 não mudaram; `updated_at` só avança quando o conteúdo persistido muda. Para
 atualizar os perfis de todos os deputados já cadastrados, envie
-`camara/deputados.perfil.seed` com dados `{}`. Os payloads brutos são mantidos
-para auditoria.
+`camara/deputados.perfil.seed` com dados `{}`.
 
 O seed anual pode ser repetido com segurança. A importação e a reconciliação
 são etapas Inngest independentes para cada ano, limitando o trabalho de cada
@@ -395,10 +448,9 @@ Inngest baixa `Ano-2008.csv.zip` até `Ano-<ano-atual>.csv.zip` diretamente de
 `https://www.camara.leg.br/cotas/`, extrai o CSV em streaming e grava os
 candidatos em lotes no PostgreSQL; o ZIP/CSV não é persistido em disco.
 
-Os payloads brutos são mantidos para auditoria e reprocessamento. Os upserts
-normalizados são idempotentes; uma execução interrompida pode ser repetida.
-O Inngest registra as etapas e faz retry das falhas sem marcar páginas
-incompletas como concluídas.
+O conteúdo bruto das respostas não é persistido; em caso de falha, o Inngest
+consulta novamente a fonte e os upserts normalizados idempotentes podem ser
+repetidos. As etapas e retries não marcam páginas incompletas como concluídas.
 
 Toda execução de função Inngest é registrada em `crawler_runs` antes de
 começar o trabalho e finalizada com estado `completed` ou `failed`, horário,

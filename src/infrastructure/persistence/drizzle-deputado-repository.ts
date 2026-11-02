@@ -59,7 +59,6 @@ export class DrizzleDeputadoRepository implements DeputadoRepository {
       const deputyRows = items.map((item: Deputado) => ({
         ...item,
         rowHash: canonicalHash(item),
-        sourcePayloadId: snapshot.sourcePayloadId,
       }));
       const changedDeputies =
         deputyRows.length === 0
@@ -74,7 +73,6 @@ export class DrizzleDeputadoRepository implements DeputadoRepository {
                   uri: sql`excluded.uri`,
                   urlFoto: sql`excluded.url_foto`,
                   rowHash: sql`excluded.row_hash`,
-                  sourcePayloadId: sql`excluded.source_payload_id`,
                   updatedAt: sql`now()`,
                 },
                 setWhere: sql`${deputados.rowHash} IS DISTINCT FROM excluded.row_hash`,
@@ -84,7 +82,6 @@ export class DrizzleDeputadoRepository implements DeputadoRepository {
       const membershipRows = memberships.map((item) => ({
         ...item,
         rowHash: canonicalHash(item),
-        sourcePayloadId: snapshot.sourcePayloadId,
       }));
       const changedMemberships =
         membershipRows.length === 0
@@ -101,7 +98,6 @@ export class DrizzleDeputadoRepository implements DeputadoRepository {
                   siglaUf: sql`excluded.sigla_uf`,
                   email: sql`excluded.email`,
                   rowHash: sql`excluded.row_hash`,
-                  sourcePayloadId: sql`excluded.source_payload_id`,
                   updatedAt: sql`now()`,
                 },
                 setWhere: sql`${deputadoLegislaturas.rowHash} IS DISTINCT FROM excluded.row_hash`,
@@ -154,7 +150,6 @@ export class DrizzleDeputadoRepository implements DeputadoRepository {
           history.vigencias.map((item) => ({
             ...item,
             rowHash: canonicalHash(item),
-            sourcePayloadId: history.sourcePayloadId,
           })),
         );
         if (historyRows.length > 0) {
@@ -174,10 +169,7 @@ export class DrizzleDeputadoRepository implements DeputadoRepository {
     });
   }
 
-  async upsertDetalhe(
-    detalhe: DeputadoDetalhe,
-    sourcePayloadId: number,
-  ): Promise<void> {
+  async upsertDetalhe(detalhe: DeputadoDetalhe): Promise<void> {
     const { deputadoId, gabinete, ...fields } = detalhe;
     const row = {
       deputadoId,
@@ -189,7 +181,6 @@ export class DrizzleDeputadoRepository implements DeputadoRepository {
       gabineteTelefone: gabinete.telefone,
       gabineteEmail: gabinete.email,
       rowHash: canonicalHash(detalhe),
-      sourcePayloadId,
     };
 
     await this.db
@@ -228,7 +219,6 @@ export class DrizzleDeputadoRepository implements DeputadoRepository {
           gabineteTelefone: sql`excluded.gabinete_telefone`,
           gabineteEmail: sql`excluded.gabinete_email`,
           rowHash: sql`excluded.row_hash`,
-          sourcePayloadId: sql`excluded.source_payload_id`,
           updatedAt: sql`CASE
             WHEN ${deputadoDetalhes.rowHash} IS DISTINCT FROM excluded.row_hash
               THEN now()

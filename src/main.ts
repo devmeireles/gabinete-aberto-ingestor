@@ -22,7 +22,6 @@ import {
 import { DrizzleLegislaturaRepository } from "@/infrastructure/persistence/drizzle-legislatura-repository";
 import { DrizzlePartidoRepository } from "@/infrastructure/persistence/drizzle-partido-repository";
 import { DrizzleDeputadoRepository } from "@/infrastructure/persistence/drizzle-deputado-repository";
-import { DrizzleRawPayloadStore } from "@/infrastructure/persistence/drizzle-raw-payload-store";
 import { DrizzleDespesaRepository } from "@/infrastructure/persistence/drizzle-despesa-repository";
 import { StreamingBilheteAereoCsvSource } from "@/infrastructure/csv/streaming-bilhete-aereo-csv-source";
 import { HttpBilheteAereoCsvArchiveSource } from "@/infrastructure/csv/http-bilhete-aereo-csv-archive-source";
@@ -35,6 +34,7 @@ import { createSeedPartidosFunction } from "@/infrastructure/inngest/functions/s
 import { createSeedPerfilPartidoFunction } from "@/infrastructure/inngest/functions/seed-perfis-partidos.function";
 import { createSyncDespesasFunction } from "@/infrastructure/inngest/functions/sync-despesas.function";
 import { createBackfillDespesasFunction } from "@/infrastructure/inngest/functions/backfill-despesas.function";
+import { createSyncBilhetesAereosFunction } from "@/infrastructure/inngest/functions/sync-bilhetes-aereos.function";
 import { createSeedBilhetesAereosFunction } from "@/infrastructure/inngest/functions/seed-bilhetes-aereos.function";
 
 /**
@@ -56,41 +56,32 @@ function main(): void {
 
   const syncLegislaturas: SyncLegislaturas = new SyncLegislaturas(
     gateway,
-    new DrizzleRawPayloadStore(database.db),
     new DrizzleLegislaturaRepository(database.db),
   );
   const deputadoRepository: DrizzleDeputadoRepository =
     new DrizzleDeputadoRepository(database.db);
-  const rawPayloadStore: DrizzleRawPayloadStore = new DrizzleRawPayloadStore(
-    database.db,
-  );
   const partidoRepository: DrizzlePartidoRepository =
     new DrizzlePartidoRepository(database.db);
   const syncPartidos: SyncPartidos = new SyncPartidos(
     gateway,
-    rawPayloadStore,
     partidoRepository,
   );
   const enrichPartido: EnrichPartido = new EnrichPartido(
     gateway,
-    rawPayloadStore,
     partidoRepository,
   );
   const syncDeputados: SyncDeputados = new SyncDeputados(
     new PrepareDeputadosPage(gateway),
-    rawPayloadStore,
     deputadoRepository,
   );
   const enrichDeputado: EnrichDeputado = new EnrichDeputado(
     gateway,
-    rawPayloadStore,
     deputadoRepository,
   );
   const despesaRepository: DrizzleDespesaRepository =
     new DrizzleDespesaRepository(database.db);
   const syncDespesas: SyncDespesas = new SyncDespesas(
     gateway,
-    new DrizzleRawPayloadStore(database.db),
     despesaRepository,
   );
   const importBilhetesAereosCsv: ImportBilhetesAereosCsv =
@@ -121,6 +112,10 @@ function main(): void {
     ),
     createSyncDespesasFunction(syncDespesas, crawlerRunRepository),
     ...createBackfillDespesasFunction(syncDespesas, crawlerRunRepository),
+    createSyncBilhetesAereosFunction(
+      importBilhetesAereosCsv,
+      crawlerRunRepository,
+    ),
     createSeedBilhetesAereosFunction(
       importBilhetesAereosCsv,
       new HttpBilheteAereoCsvArchiveSource(),

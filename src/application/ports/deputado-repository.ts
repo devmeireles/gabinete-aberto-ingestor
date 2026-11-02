@@ -10,21 +10,16 @@ export interface DeputadoPartidoHistoricoSnapshot {
   readonly deputadoId: number;
   readonly legislaturaId: number;
   readonly vigencias: readonly DeputadoPartidoVigencia[];
-  readonly sourcePayloadId: number;
 }
 
 export interface DeputadoPageSnapshot {
   readonly deputados: readonly Deputado[];
   readonly legislaturas: readonly DeputadoLegislatura[];
-  readonly sourcePayloadId: number;
   readonly historicos: readonly DeputadoPartidoHistoricoSnapshot[];
 }
 
 export interface DeputadoRepository {
   listIds(): Promise<readonly number[]>;
   syncPage(snapshot: DeputadoPageSnapshot): Promise<UpsertResult>;
-  upsertDetalhe(
-    detalhe: DeputadoDetalhe,
-    sourcePayloadId: number,
-  ): Promise<void>;
+  upsertDetalhe(detalhe: DeputadoDetalhe): Promise<void>;
 }

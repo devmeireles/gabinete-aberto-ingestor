@@ -10,10 +10,6 @@ export interface PartidoRepository {
   upsertMany(
     partidos: readonly Partido[],
     legislaturas: readonly PartidoLegislatura[],
-    sourcePayloadId: number,
   ): Promise<UpsertResult>;
-  upsertDetalhe(
-    detalhe: PartidoDetalhe,
-    sourcePayloadId: number,
-  ): Promise<void>;
+  upsertDetalhe(detalhe: PartidoDetalhe): Promise<void>;
 }

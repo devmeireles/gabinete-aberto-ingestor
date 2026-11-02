@@ -24,7 +24,6 @@ export class DrizzlePartidoRepository implements PartidoRepository {
   async upsertMany(
     items: readonly Partido[],
     memberships: readonly PartidoLegislatura[],
-    sourcePayloadId: number,
   ): Promise<UpsertResult> {
     if (items.length !== memberships.length) {
       throw new Error("Cada partido deve ter uma associação de legislatura");
@@ -40,7 +39,6 @@ export class DrizzlePartidoRepository implements PartidoRepository {
       const partyRows = items.map((item: Partido) => ({
         ...item,
         rowHash: canonicalHash(item),
-        sourcePayloadId,
       }));
       const changedParties = await tx
         .insert(partidos)
@@ -52,7 +50,6 @@ export class DrizzlePartidoRepository implements PartidoRepository {
             nome: sql`excluded.nome`,
             uri: sql`excluded.uri`,
             rowHash: sql`excluded.row_hash`,
-            sourcePayloadId: sql`excluded.source_payload_id`,
             updatedAt: sql`now()`,
           },
           setWhere: sql`${partidos.rowHash} IS DISTINCT FROM excluded.row_hash`,
@@ -62,7 +59,6 @@ export class DrizzlePartidoRepository implements PartidoRepository {
       const membershipRows = memberships.map((item: PartidoLegislatura) => ({
         ...item,
         rowHash: canonicalHash(item),
-        sourcePayloadId,
       }));
       const changedMemberships = await tx
         .insert(partidoLegislaturas)
@@ -74,7 +70,6 @@ export class DrizzlePartidoRepository implements PartidoRepository {
           ],
           set: {
             rowHash: sql`excluded.row_hash`,
-            sourcePayloadId: sql`excluded.source_payload_id`,
             updatedAt: sql`now()`,
           },
           setWhere: sql`${partidoLegislaturas.rowHash} IS DISTINCT FROM excluded.row_hash`,
@@ -92,10 +87,7 @@ export class DrizzlePartidoRepository implements PartidoRepository {
     });
   }
 
-  async upsertDetalhe(
-    detalhe: PartidoDetalhe,
-    sourcePayloadId: number,
-  ): Promise<void> {
+  async upsertDetalhe(detalhe: PartidoDetalhe): Promise<void> {
     const { partidoId, lider, ...fields } = detalhe;
     const row = {
       partidoId,
@@ -108,7 +100,6 @@ export class DrizzlePartidoRepository implements PartidoRepository {
       liderLegislaturaId: lider.legislaturaId,
       liderUrlFoto: lider.urlFoto,
       rowHash: canonicalHash(detalhe),
-      sourcePayloadId,
     };
 
     await this.db
@@ -135,7 +126,6 @@ export class DrizzlePartidoRepository implements PartidoRepository {
           urlWebSite: sql`excluded.url_website`,
           urlFacebook: sql`excluded.url_facebook`,
           rowHash: sql`excluded.row_hash`,
-          sourcePayloadId: sql`excluded.source_payload_id`,
           updatedAt: sql`CASE
             WHEN ${partidoDetalhes.rowHash} IS DISTINCT FROM excluded.row_hash
               THEN now()

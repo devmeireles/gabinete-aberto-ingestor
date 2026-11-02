@@ -3,6 +3,10 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ListDespesasQuery } from "@/application/ports/camara-gateway/despesas";
+import { Readable } from "node:stream";
+import { runBilhetes } from "@/cli/bilhetes";
+import { mapDespesa } from "@/application/mappers/despesa-mapper";
+import { DrizzleDespesaRepository } from "@/infrastructure/persistence/drizzle-despesa-repository";
 import { runDespesas } from "@/cli/despesas";
 import * as schema from "@/infrastructure/persistence/schema";
 
@@ -10,6 +14,7 @@ const harness = vi.hoisted(() => ({
   createDatabase: vi.fn(),
   listDespesas: vi.fn(),
   end: vi.fn(),
+  openCsv: vi.fn(),
 }));
 
 vi.mock("@/infrastructure/persistence/client", () => ({
@@ -18,6 +23,12 @@ vi.mock("@/infrastructure/persistence/client", () => ({
 vi.mock("@/infrastructure/camara/http-camara-gateway", () => ({
   HttpCamaraGateway: class {
     listDespesas = harness.listDespesas;
+  },
+}));
+
+vi.mock("@/infrastructure/csv/http-bilhete-aereo-csv-archive-source", () => ({
+  HttpBilheteAereoCsvArchiveSource: class {
+    openCsv = harness.openCsv;
   },
 }));
 
@@ -104,7 +115,7 @@ describe("local expense backfill persistence and run tracking", () => {
     vi.unstubAllEnvs();
   });
 
-  it("tracks each deputy/month, persists raw and quarantine data, and supports reruns", async () => {
+  it("tracks each deputy/month, persists quarantine data, and supports reruns", async () => {
     await runDespesas(backfillArgs);
     const runs = await database.query<{
       function_id: string;
@@ -148,13 +159,11 @@ describe("local expense backfill persistence and run tracking", () => {
     await runDespesas(backfillArgs);
     const counts = await database.query(
       `SELECT (SELECT count(*)::int FROM despesas) AS expenses,
-       (SELECT count(*)::int FROM raw_payloads) AS raw,
        (SELECT count(*)::int FROM despesa_conflicts) AS conflicts,
        (SELECT count(*)::int FROM crawler_runs) AS runs`,
     );
     expect(counts.rows[0]).toEqual({
       expenses: 8,
-      raw: 8,
       conflicts: 8,
       runs: 8,
     });
@@ -209,6 +218,101 @@ describe("local expense backfill persistence and run tracking", () => {
     expect(quarantine.rows[0]?.payload).toMatchObject({
       codDocumento: null,
       tipoDespesa: "PASSAGEM AÉREA - MISSÃO OFICIAL",
+    });
+  });
+
+  it("reports legacy ticket IDs and reimports locally before reconciling", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const db = drizzle(database, { schema });
+    const repository = new DrizzleDespesaRepository(db);
+    const ticket = {
+      deputadoId: 1,
+      legislaturaId: 57,
+      ano: 2024,
+      mes: 3,
+      tipoDespesa: "PASSAGEM AÉREA - SIGEPA",
+      codDocumento: "ticket",
+      codTipoDocumento: 0,
+      dataDocumento: "2024-03-01T00:00:00",
+      numDocumento: "number",
+      parcela: 0,
+      codLote: 0,
+      cnpjCpfFornecedor: "123",
+      valorDocumento: 100,
+      passageiro: "Passenger",
+      trecho: "BSB/CGH",
+      arquivo: "Ano-2024.csv",
+      linha: 2,
+    };
+    await repository.upsertMany(
+      [
+        mapDespesa(
+          {
+            ...ticket,
+            tipoDocumento: "Nota Fiscal",
+            numRessarcimento: "0",
+            nomeFornecedor: "Supplier",
+            valorGlosa: 0,
+            valorLiquido: 100,
+            urlDocumento: null,
+          },
+          1,
+          57,
+        ),
+      ],
+    );
+    await repository.importBilhetesCsv([{ ...ticket, deputadoId: 1234 }]);
+    await runBilhetes(["--ano=2024", "--persist"]);
+    expect(harness.openCsv).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('"event":"crawler.bilhetes.reimport_required"'),
+    );
+    harness.openCsv.mockResolvedValue({
+      fileName: "Ano-2024.csv",
+      content: Readable.from([
+        Buffer.from(
+          '"txtDescricao";"indTipoDocumento";"ideCadastro";"nuDeputadoId";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento";"txtPassageiro";"txtTrecho"\n' +
+            '"PASSAGEM AÉREA - SIGEPA";"0";"1";"1234";"57";"2024";"3";"ticket";"2024-03-01T00:00:00";"number";"0";"0";"123";"100";"Passenger";"BSB/CGH"\n',
+        ),
+      ]),
+    });
+    await runBilhetes(["--ano=2024", "--import", "--persist"]);
+    expect(harness.openCsv).toHaveBeenCalledWith(2024);
+    expect(
+      (await database.query("SELECT passageiro,trecho FROM despesas")).rows,
+    ).toEqual([{ passageiro: "Passenger", trecho: "BSB/CGH" }]);
+    expect(
+      (await database.query("SELECT * FROM bilhetes_aereos_csv")).rows,
+    ).toEqual([]);
+    const runs = await database.query<{
+      status: string;
+      summary: Record<string, unknown>;
+    }>(
+      "SELECT status,summary FROM crawler_runs WHERE function_id='cli-sync-bilhetes-aereos' ORDER BY id",
+    );
+    expect(runs.rows).toHaveLength(2);
+    expect(runs.rows[0]).toMatchObject({
+      status: "completed",
+      summary: {
+        importCsv: false,
+        enriched: 0,
+        removed: 0,
+        pendingTickets: 1,
+        ticketsWithKnownDeputy: 0,
+      },
+    });
+    expect(runs.rows[1]).toMatchObject({
+      status: "completed",
+      summary: {
+        importCsv: true,
+        scanned: 1,
+        candidates: 1,
+        imported: 1,
+        enriched: 1,
+        removed: 2,
+        replacedLegacy: 1,
+        pendingTickets: 0,
+      },
     });
   });
 

@@ -8,8 +8,5 @@ export interface UpsertResult {
 }
 
 export interface LegislaturaRepository {
-  upsertMany(
-    items: readonly Legislatura[],
-    sourcePayloadId: number,
-  ): Promise<UpsertResult>;
+  upsertMany(items: readonly Legislatura[]): Promise<UpsertResult>;
 }

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -7,12 +8,13 @@ describe("partido details migration", () => {
 
   beforeEach(async () => {
     database = new PGlite();
-    await executeMigration(database, "0000_init_raw_and_phase1.sql");
-    await executeMigration(database, "0009_partido_details.sql");
-    await executeMigration(database, "0010_party_profile_last_fetched.sql");
+    const migrationsDir = new URL("../../../drizzle/", import.meta.url);
+    for (const filename of (await readdir(migrationsDir))
+      .filter((name) => name.endsWith(".sql"))
+      .sort()) {
+      await executeMigration(database, filename);
+    }
     await database.exec(`
-      INSERT INTO raw_payloads (request_key, content_hash, payload)
-      VALUES ('partidos/37906', repeat('a', 64), '{"dados": {}}');
       INSERT INTO legislaturas (id, uri, data_inicio, data_fim, row_hash)
       VALUES (
         57,
@@ -41,12 +43,12 @@ describe("partido details migration", () => {
       INSERT INTO partido_detalhes (
         partido_id, status_data, status_legislatura_id, situacao,
         total_posse, total_membros, lider_nome, lider_uf, numero_eleitoral,
-          url_logo, row_hash, source_payload_id, last_fetched_at
+          url_logo, row_hash, last_fetched_at
       ) VALUES (
         37906, '2026-03-31T12:27', 57, 'Ativo', 98, 98, 'Bia Kicis',
         'DF', NULL,
         'https://www.camara.leg.br/internet/Deputado/img/partidos/PL.gif',
-          repeat('d', 64), 1, now()
+          repeat('d', 64), now()
       );
     `);
 
@@ -71,12 +73,12 @@ describe("partido details migration", () => {
     ]);
   });
 
-  it("requires the listed party and source payload to exist", async () => {
+  it("requires the listed party to exist", async () => {
     await expect(
       database.exec(`
         INSERT INTO partido_detalhes (
-          partido_id, row_hash, source_payload_id
-        ) VALUES (999, repeat('e', 64), 1)
+          partido_id, row_hash
+        ) VALUES (999, repeat('e', 64))
       `),
     ).rejects.toThrow();
   });

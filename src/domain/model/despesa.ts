@@ -21,6 +21,8 @@ export interface Despesa {
 }
 
 export interface BilheteAereoCsv {
+  /** Source-only CEAP ID, used to replace identical rows imported with legacy IDs. */
+  readonly ceapDeputadoId?: number;
   readonly deputadoId: number;
   readonly legislaturaId: number;
   readonly ano: number;

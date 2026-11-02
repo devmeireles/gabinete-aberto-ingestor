@@ -11,10 +11,7 @@ import { legislaturas } from "./schema.js";
 export class DrizzleLegislaturaRepository implements LegislaturaRepository {
   constructor(private readonly db: Database) {}
 
-  async upsertMany(
-    items: readonly Legislatura[],
-    sourcePayloadId: number,
-  ): Promise<UpsertResult> {
+  async upsertMany(items: readonly Legislatura[]): Promise<UpsertResult> {
     if (items.length === 0) {
       return { written: 0, unchanged: 0 };
     }
@@ -31,7 +28,6 @@ export class DrizzleLegislaturaRepository implements LegislaturaRepository {
         dataInicio: item.dataInicio,
         dataFim: item.dataFim,
       }),
-      sourcePayloadId,
     }));
 
     return this.db.transaction(async (tx) => {
@@ -45,7 +41,6 @@ export class DrizzleLegislaturaRepository implements LegislaturaRepository {
             dataInicio: sql`excluded.data_inicio`,
             dataFim: sql`excluded.data_fim`,
             rowHash: sql`excluded.row_hash`,
-            sourcePayloadId: sql`excluded.source_payload_id`,
             updatedAt: sql`now()`,
           },
           setWhere: sql`${legislaturas.rowHash} IS DISTINCT FROM excluded.row_hash`,

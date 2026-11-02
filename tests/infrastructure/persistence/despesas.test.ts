@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mapDespesa } from "@/application/mappers/despesa-mapper";
 import { SyncDespesas } from "@/application/use-cases/sync-despesas";
 import type { DespesaDto } from "@/application/ports/camara-gateway/despesas";
-import { DrizzleRawPayloadStore } from "@/infrastructure/persistence/drizzle-raw-payload-store";
 import type { BilheteAereoCsv } from "@/domain/model/despesa";
 import { DrizzleDespesaRepository } from "@/infrastructure/persistence/drizzle-despesa-repository";
 import * as schema from "@/infrastructure/persistence/schema";
@@ -25,12 +24,19 @@ describe("expense persistence and CSV reconciliation", () => {
     await executeMigration(database, "0004_legislatura_atual.sql");
     await executeMigration(database, "0005_silent_raider.sql");
     await executeMigration(database, "0006_bilhete_associations.sql");
+    await executeMigration(database, "0007_deputado_details.sql");
+    await executeMigration(database, "0008_deputado_status_snapshot.sql");
+    await executeMigration(database, "0009_partido_details.sql");
+    await executeMigration(database, "0010_party_profile_last_fetched.sql");
+    await executeMigration(database, "0011_deputy_profile_last_fetched.sql");
     await executeMigration(database, "0012_curly_black_tarantula.sql");
     await executeMigration(database, "0013_round_colossus.sql");
     await executeMigration(
       database,
       "0014_expense_document_identity_and_conflicts.sql",
     );
+    await executeMigration(database, "0015_consume_reconciled_air_tickets.sql");
+    await executeMigration(database, "0016_remove_raw_payloads.sql");
     await database.exec(`
       INSERT INTO legislaturas (id, uri, data_inicio, data_fim, row_hash)
       VALUES (57, 'https://dadosabertos.camara.leg.br/api/v2/legislaturas/57', '2023-02-01', '2027-01-31', repeat('a', 64));
@@ -42,8 +48,6 @@ describe("expense persistence and CSV reconciliation", () => {
       VALUES ('PASSAGEM AÉREA - SIGEPA');
       INSERT INTO fornecedores (nome, cnpj_cpf)
       VALUES ('AZUL', '09296295000160');
-      INSERT INTO raw_payloads (request_key, content_hash, payload)
-      VALUES ('fixture', repeat('d', 64), '{}'::jsonb);
     `);
   });
 
@@ -51,146 +55,285 @@ describe("expense persistence and CSV reconciliation", () => {
     await database.close();
   });
 
-  it("upserts negative expenses and only enriches unambiguous CSV matches", async () => {
+  it("consumes negative tickets atomically, detects later conflicts and keeps ambiguous staging rows", async () => {
     const repository = new DrizzleDespesaRepository(
       drizzle(database, { schema }),
     );
-    const rawPayload = await database.query<{ id: number }>(
-      "SELECT id FROM raw_payloads WHERE request_key = 'fixture'",
-    );
-    const sourcePayloadId: number = rawPayload.rows[0]!.id;
-    const expense = mapDespesa(
-      {
-        ano: 2025,
-        mes: 4,
-        tipoDespesa: "PASSAGEM AÉREA - SIGEPA",
-        codDocumento: "302323",
-        tipoDocumento: "Nota Fiscal",
-        codTipoDocumento: 0,
-        dataDocumento: "2025-04-08T12:00:00",
-        numDocumento: "BFBWSI",
-        parcela: 0,
-        numRessarcimento: "0",
-        codLote: 0,
-        nomeFornecedor: "AZUL",
-        cnpjCpfFornecedor: "09296295000160",
-        valorDocumento: -391.23,
-        valorGlosa: 0,
-        valorLiquido: -391.23,
-        urlDocumento: null,
-      },
-      218086,
-      57,
-    );
-    expect(
-      await repository.upsertMany([expense], sourcePayloadId),
-    ).toMatchObject({
-      written: 1,
-      unchanged: 0,
-    });
-
-    await repository.importBilhetesCsv([csvTicket("BSB/CGH")]);
+    const ticket = csvTicket("BSB/CGH");
+    const expense = expenseForTicket(ticket);
+    await repository.upsertMany([expense]);
+    await repository.importBilhetesCsv([ticket]);
     expect(await repository.enrichFromBilhetesCsv()).toEqual({
       enriched: 1,
       ambiguous: 0,
+      removed: 1,
     });
-    let rows = await database.query<{
-      valor_documento: string;
-      passageiro: string | null;
-      trecho: string | null;
-      bilhete_match_ambiguo: boolean;
-    }>(
-      `SELECT valor_documento, passageiro, trecho, bilhete_match_ambiguo
-       FROM despesas WHERE cod_documento = '302323'`,
+    expect(
+      (await database.query("SELECT * FROM bilhetes_aereos_csv")).rows,
+    ).toEqual([]);
+    expect(
+      (
+        await database.query(
+          "SELECT valor_documento,passageiro,trecho,bilhete_match_ambiguo FROM despesas",
+        )
+      ).rows,
+    ).toEqual([
+      {
+        valor_documento: "-391.23",
+        passageiro: ticket.passageiro,
+        trecho: ticket.trecho,
+        bilhete_match_ambiguo: false,
+      },
+    ]);
+    expect(await repository.enrichFromBilhetesCsv()).toEqual({
+      enriched: 0,
+      ambiguous: 0,
+      removed: 0,
+    });
+    await repository.importBilhetesCsv([ticket]);
+    expect(await repository.enrichFromBilhetesCsv()).toEqual({
+      enriched: 0,
+      ambiguous: 0,
+      removed: 1,
+    });
+    // A URL correction must not erase the only surviving copy of the enrichment.
+    await repository.upsertMany(
+      [{ ...expense, urlDocumento: "https://example.com/corrected" }],
     );
-    expect(rows.rows[0]).toEqual({
-      valor_documento: "-391.23",
-      passageiro: "Eliane de Sousa Alves",
-      trecho: "BSB/CGH",
-      bilhete_match_ambiguo: false,
-    });
-    const associatedTicket = await database.query<{
-      status: string;
-      associated_expense_id: string;
-    }>(
-      `SELECT status, associated_expense_id::text
-       FROM bilhetes_aereos_csv`,
-    );
-    expect(associatedTicket.rows[0]).toEqual({
-      status: "associated",
-      associated_expense_id: "1",
-    });
-
+    expect(
+      (await database.query("SELECT passageiro,trecho FROM despesas")).rows,
+    ).toEqual([{ passageiro: ticket.passageiro, trecho: ticket.trecho }]);
     await repository.importBilhetesCsv([csvTicket("CGH/BSB")]);
     expect(await repository.enrichFromBilhetesCsv()).toEqual({
       enriched: 0,
       ambiguous: 1,
+      removed: 0,
     });
-    const ambiguousRows = await database.query<{
-      passageiro: string | null;
-      trecho: string | null;
-      bilhete_match_ambiguo: boolean;
-    }>(
-      `SELECT passageiro, trecho, bilhete_match_ambiguo
-       FROM despesas WHERE cod_documento = '302323'`,
-    );
-    expect(ambiguousRows.rows[0]).toEqual({
-      passageiro: null,
-      trecho: null,
-      bilhete_match_ambiguo: true,
-    });
-    const availableTickets = await database.query<{ status: string }>(
-      `SELECT status FROM bilhetes_aereos_csv ORDER BY id`,
-    );
-    expect(availableTickets.rows).toEqual([
-      { status: "available" },
-      { status: "available" },
+    expect(
+      (
+        await database.query(
+          "SELECT passageiro,trecho,bilhete_match_ambiguo FROM despesas",
+        )
+      ).rows,
+    ).toEqual([
+      { passageiro: null, trecho: null, bilhete_match_ambiguo: true },
     ]);
+    expect(
+      (await database.query("SELECT trecho FROM bilhetes_aereos_csv")).rows,
+    ).toEqual([{ trecho: "CGH/BSB" }]);
+    const before = (await database.query("SELECT xmin::text FROM despesas"))
+      .rows;
+    expect(await repository.enrichFromBilhetesCsv()).toEqual({
+      enriched: 0,
+      ambiguous: 1,
+      removed: 0,
+    });
+    expect(
+      (await database.query("SELECT xmin::text FROM despesas")).rows,
+    ).toEqual(before);
+  });
 
+  it("reconciles a staged ticket when its matching expense is inserted", async () => {
+    const repository = new DrizzleDespesaRepository(
+      drizzle(database, { schema }),
+    );
+    const ticket = csvTicket("BSB/CGH");
+    await repository.importBilhetesCsv([ticket]);
+
+    await expect(
+      repository.upsertMany([expenseForTicket(ticket)]),
+    ).resolves.toMatchObject({
+      written: 1,
+      enriched: 1,
+      ambiguous: 0,
+      removed: 1,
+    });
+    expect(
+      (await database.query("SELECT passageiro,trecho FROM despesas")).rows,
+    ).toEqual([{ passageiro: ticket.passageiro, trecho: ticket.trecho }]);
+    expect(
+      (await database.query("SELECT * FROM bilhetes_aereos_csv")).rows,
+    ).toEqual([]);
+  });
+
+  it("retains a ticket when multiple expenses are eligible", async () => {
+    const repository = new DrizzleDespesaRepository(
+      drizzle(database, { schema }),
+    );
+    const ticket = csvTicket("BSB/CGH");
+    const expense = expenseForTicket(ticket);
     await repository.upsertMany(
       [
-        {
-          ...expense,
-          valorDocumento: -400,
-          valorLiquido: -400,
-        },
+        expense,
+        { ...expense, valorGlosa: 1, valorLiquido: expense.valorLiquido - 1 },
       ],
-      sourcePayloadId,
     );
-    const correctedRows = await database.query<{
-      valor_documento: string;
-      passageiro: string | null;
-      trecho: string | null;
-      bilhete_match_ambiguo: boolean;
-    }>(
-      `SELECT valor_documento, passageiro, trecho, bilhete_match_ambiguo
-       FROM despesas WHERE cod_documento = '302323'`,
-    );
-    expect(correctedRows.rows[0]).toEqual({
-      valor_documento: "-400.00",
-      passageiro: null,
-      trecho: null,
-      bilhete_match_ambiguo: false,
+    await repository.importBilhetesCsv([ticket]);
+    expect(await repository.enrichFromBilhetesCsv()).toEqual({
+      enriched: 0,
+      ambiguous: 2,
+      removed: 0,
     });
-    const releasedTickets = await database.query<{
-      status: string;
-      associated_expense_id: string | null;
-    }>(
-      `SELECT status, associated_expense_id::text
-       FROM bilhetes_aereos_csv ORDER BY id`,
+    expect(
+      (await database.query("SELECT bilhete_match_ambiguo FROM despesas")).rows,
+    ).toEqual([
+      { bilhete_match_ambiguo: true },
+      { bilhete_match_ambiguo: true },
+    ]);
+    expect(
+      (await database.query("SELECT * FROM bilhetes_aereos_csv")).rows,
+    ).toHaveLength(1);
+  });
+
+  it("rolls back expense enrichment if deleting the consumed ticket fails", async () => {
+    const repository = new DrizzleDespesaRepository(
+      drizzle(database, { schema }),
     );
-    expect(releasedTickets.rows).toEqual([
-      { status: "available", associated_expense_id: null },
-      { status: "available", associated_expense_id: null },
+    const ticket = csvTicket("BSB/CGH");
+    await repository.upsertMany([expenseForTicket(ticket)]);
+    await repository.importBilhetesCsv([ticket]);
+    await database.exec(`
+      CREATE FUNCTION fixture_reject_ticket_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'fixture ticket delete failure'; END $$;
+      CREATE TRIGGER fixture_reject_ticket_delete BEFORE DELETE ON bilhetes_aereos_csv
+      FOR EACH ROW EXECUTE FUNCTION fixture_reject_ticket_delete();
+    `);
+    await expect(repository.enrichFromBilhetesCsv()).rejects.toThrow();
+    expect(
+      (await database.query("SELECT passageiro,trecho FROM despesas")).rows,
+    ).toEqual([{ passageiro: null, trecho: null }]);
+    expect(
+      (await database.query("SELECT * FROM bilhetes_aereos_csv")).rows,
+    ).toHaveLength(1);
+  });
+
+  it("does not consume tickets with a different supplier tax ID", async () => {
+    const repository = new DrizzleDespesaRepository(
+      drizzle(database, { schema }),
+    );
+    const ticket = csvTicket("BSB/CGH");
+    await repository.upsertMany([expenseForTicket(ticket)]);
+    await repository.importBilhetesCsv([
+      { ...ticket, cnpjCpfFornecedor: "different" },
+    ]);
+    expect(await repository.enrichFromBilhetesCsv()).toEqual({
+      enriched: 0,
+      ambiguous: 0,
+      removed: 0,
+    });
+    expect(
+      (await database.query("SELECT * FROM bilhetes_aereos_csv")).rows,
+    ).toHaveLength(1);
+  });
+
+  it("replaces only identical legacy-ID staging rows during an authoritative CSV reimport", async () => {
+    const repository = new DrizzleDespesaRepository(
+      drizzle(database, { schema }),
+    );
+    const ticket = csvTicket("BSB/CGH");
+    await repository.importBilhetesCsv([
+      { ...ticket, deputadoId: 1234 },
+      { ...ticket, deputadoId: 1234, trecho: "different route" },
+    ]);
+    expect(
+      await repository.importBilhetesCsv([{ ...ticket, ceapDeputadoId: 1234 }]),
+    ).toEqual({ imported: 1, enriched: 0, ambiguous: 0, removed: 1 });
+    const rows = await database.query(
+      "SELECT deputado_id,trecho FROM bilhetes_aereos_csv ORDER BY deputado_id",
+    );
+    expect(rows.rows).toEqual([
+      { deputado_id: 1234, trecho: "different route" },
+      { deputado_id: 218086, trecho: "BSB/CGH" },
+    ]);
+  });
+
+  it("resolves existing suppliers and categories without attempting inserts again", async () => {
+    const queries: string[] = [];
+    const repository = new DrizzleDespesaRepository(
+      drizzle(database, {
+        schema,
+        logger: {
+          logQuery: (query) => {
+            queries.push(query);
+          },
+        },
+      }),
+    );
+    const expense = mapDespesa(fixtureExpenseDto(), 218086, 57);
+    await expect(
+      repository.upsertMany([expense]),
+    ).resolves.toMatchObject({ written: 1 });
+    queries.length = 0;
+    await expect(
+      repository.upsertMany([expense]),
+    ).resolves.toMatchObject({ written: 0, unchanged: 1 });
+    expect(
+      queries.filter((query) =>
+        /insert into "(?:tipos_despesa|fornecedores)"/.test(query),
+      ),
+    ).toEqual([]);
+    const stored = await database.query(
+      "SELECT t.nome AS category, f.nome AS supplier, f.cnpj_cpf FROM despesas d JOIN tipos_despesa t ON t.id=d.tipo_despesa_id JOIN fornecedores f ON f.id=d.fornecedor_id",
+    );
+    expect(stored.rows).toEqual([
+      {
+        category: expense.tipoDespesa,
+        supplier: expense.nomeFornecedor,
+        cnpj_cpf: expense.cnpjCpfFornecedor,
+      },
+    ]);
+    await expect(
+      repository.upsertMany(
+        [
+          {
+            ...expense,
+            tipoDespesa: "New category",
+            nomeFornecedor: "New supplier",
+          },
+        ],
+      ),
+    ).resolves.toMatchObject({ written: 1 });
+  });
+
+  it("resolves stable IDs when a dimension insert returns no rows", async () => {
+    // Emulate another inserter winning after the initial lookup. The inner
+    // insertion supplies a stable row while the outer INSERT returns nothing.
+    await database.exec(`
+      CREATE FUNCTION fixture_dimension_winner() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF pg_trigger_depth() = 1 THEN
+          IF TG_TABLE_NAME = 'tipos_despesa' THEN
+            INSERT INTO tipos_despesa (nome) VALUES (NEW.nome);
+          ELSE
+            INSERT INTO fornecedores (nome, cnpj_cpf) VALUES (NEW.nome, NEW.cnpj_cpf);
+          END IF;
+          RETURN NULL;
+        END IF;
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER fixture_category_winner BEFORE INSERT ON tipos_despesa
+      FOR EACH ROW EXECUTE FUNCTION fixture_dimension_winner();
+      CREATE TRIGGER fixture_supplier_winner BEFORE INSERT ON fornecedores
+      FOR EACH ROW EXECUTE FUNCTION fixture_dimension_winner();
+    `);
+    const repository = new DrizzleDespesaRepository(
+      drizzle(database, { schema }),
+    );
+    const expense = mapDespesa(fixtureExpenseDto(), 218086, 57);
+    await expect(
+      repository.upsertMany([expense]),
+    ).resolves.toMatchObject({ written: 1 });
+    const rows = await database.query(
+      "SELECT t.nome AS category,f.nome AS supplier FROM despesas d JOIN tipos_despesa t ON t.id=d.tipo_despesa_id JOIN fornecedores f ON f.id=d.fornecedor_id",
+    );
+    expect(rows.rows).toEqual([
+      { category: expense.tipoDespesa, supplier: expense.nomeFornecedor },
     ]);
   });
 
   it("writes an identical natural-key expense only once per page", async () => {
     const repository = new DrizzleDespesaRepository(
       drizzle(database, { schema }),
-    );
-    const rawPayload = await database.query<{ id: number }>(
-      "SELECT id FROM raw_payloads WHERE request_key = 'fixture'",
     );
     const expense = mapDespesa(
       {
@@ -217,7 +360,7 @@ describe("expense persistence and CSV reconciliation", () => {
     );
 
     await expect(
-      repository.upsertMany([expense, expense], rawPayload.rows[0]!.id),
+      repository.upsertMany([expense, expense]),
     ).resolves.toMatchObject({ written: 1, unchanged: 1 });
     const rows = await database.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM despesas",
@@ -235,9 +378,6 @@ describe("expense persistence and CSV reconciliation", () => {
       INSERT INTO deputado_legislaturas (deputado_id, legislatura_id, row_hash)
       VALUES (226553, 57, repeat('f', 64));
     `);
-    const rawPayload = await database.query<{ id: number }>(
-      "SELECT id FROM raw_payloads WHERE request_key = 'fixture'",
-    );
     const makeExpense = (valor: number) =>
       mapDespesa(
         {
@@ -265,10 +405,10 @@ describe("expense persistence and CSV reconciliation", () => {
     const expenses = [makeExpense(59), makeExpense(1386.71)];
 
     await expect(
-      repository.upsertMany(expenses, rawPayload.rows[0]!.id),
+      repository.upsertMany(expenses),
     ).resolves.toMatchObject({ written: 2, unchanged: 0 });
     await expect(
-      repository.upsertMany(expenses, rawPayload.rows[0]!.id),
+      repository.upsertMany(expenses),
     ).resolves.toMatchObject({ written: 0, unchanged: 2 });
     const rows = await database.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM despesas WHERE cod_documento = '186534'",
@@ -279,9 +419,6 @@ describe("expense persistence and CSV reconciliation", () => {
   it("quarantines all conflicting variants while writing unrelated expenses", async () => {
     const repository = new DrizzleDespesaRepository(
       drizzle(database, { schema }),
-    );
-    const rawPayload = await database.query<{ id: number }>(
-      "SELECT id FROM raw_payloads WHERE request_key = 'fixture'",
     );
     const expense = mapDespesa(
       {
@@ -310,16 +447,15 @@ describe("expense persistence and CSV reconciliation", () => {
     const conflict = { ...expense, nomeFornecedor: "Another supplier" };
     const valid = { ...expense, codDocumento: "valid" };
     const items = [expense, conflict, expense, valid, valid];
-    const sourcePayloadId = rawPayload.rows[0]!.id;
     await expect(
-      repository.upsertMany(items, sourcePayloadId),
+      repository.upsertMany(items),
     ).resolves.toMatchObject({
       written: 1,
       unchanged: 1,
       conflicted: 3,
     });
     await expect(
-      repository.upsertMany(items, sourcePayloadId),
+      repository.upsertMany(items),
     ).resolves.toMatchObject({
       written: 0,
       unchanged: 2,
@@ -330,12 +466,11 @@ describe("expense persistence and CSV reconciliation", () => {
     );
     expect(rows.rows).toEqual([{ cod_documento: "valid" }]);
     const quarantined = await database.query<{
-      source_payload_id: number;
       natural_key: string;
       payload: unknown;
       reason: string;
     }>(
-      "SELECT source_payload_id::int, natural_key, payload, reason FROM despesa_conflicts ORDER BY id",
+      "SELECT natural_key, payload, reason FROM despesa_conflicts ORDER BY id",
     );
     expect(quarantined.rows).toHaveLength(2);
     expect(quarantined.rows.map((row) => row.payload)).toEqual([
@@ -343,18 +478,18 @@ describe("expense persistence and CSV reconciliation", () => {
       conflict,
     ]);
     expect(quarantined.rows[0]).toMatchObject({
-      source_payload_id: sourcePayloadId,
       natural_key: expect.any(String),
       reason: "same_natural_key_different_content",
     });
     await expect(
-      repository.upsertMany([expense, conflict], sourcePayloadId),
+      repository.upsertMany([expense, conflict]),
     ).resolves.toEqual({
       written: 0,
       unchanged: 0,
       conflicted: 2,
       enriched: 0,
       ambiguous: 0,
+      removed: 0,
     });
   });
 
@@ -378,19 +513,15 @@ describe("expense persistence and CSV reconciliation", () => {
       makeExpense("undated", null),
       makeExpense("undated", "2023-04-15T00:00:00"),
     ];
-    const raw = await database.query<{ id: number }>(
-      "SELECT id FROM raw_payloads LIMIT 1",
-    );
-    const sourcePayloadId = raw.rows[0]!.id;
     await expect(
-      repository.upsertMany([...items, items[2]!], sourcePayloadId),
+      repository.upsertMany([...items, items[2]!]),
     ).resolves.toMatchObject({
       written: 4,
       unchanged: 1,
       conflicted: 0,
     });
     await expect(
-      repository.upsertMany(items, sourcePayloadId),
+      repository.upsertMany(items),
     ).resolves.toMatchObject({
       written: 0,
       unchanged: 4,
@@ -402,7 +533,7 @@ describe("expense persistence and CSV reconciliation", () => {
     expect(rows.rows[0]?.count).toBe(4);
   });
 
-  it("continues to later pages and retains raw payloads after a conflicting page", async () => {
+  it("continues to later pages and quarantines conflicting records", async () => {
     const db = drizzle(database, { schema });
     const dto = fixtureExpenseDto();
     const requestedPages: number[] = [];
@@ -423,7 +554,6 @@ describe("expense persistence and CSV reconciliation", () => {
           };
         },
       },
-      new DrizzleRawPayloadStore(db),
       new DrizzleDespesaRepository(db),
     );
     await expect(
@@ -436,12 +566,13 @@ describe("expense persistence and CSV reconciliation", () => {
       conflicted: 2,
       enriched: 0,
       ambiguous: 0,
+      removed: 0,
     });
     expect(requestedPages).toEqual([1, 2]);
-    const raw = await database.query<{ count: number }>(
-      "SELECT count(*)::int AS count FROM raw_payloads WHERE request_key LIKE 'fixture-page-%'",
+    const rawTable = await database.query<{ table_name: string | null }>(
+      "SELECT to_regclass('public.raw_payloads') AS table_name",
     );
-    expect(raw.rows[0]?.count).toBe(2);
+    expect(rawTable.rows[0]?.table_name).toBeNull();
   });
 
   it("quarantines missing API document codes and writes subsequent pages idempotently", async () => {
@@ -467,7 +598,6 @@ describe("expense persistence and CSV reconciliation", () => {
           };
         },
       },
-      new DrizzleRawPayloadStore(db),
       new DrizzleDespesaRepository(db),
     );
     await expect(
@@ -491,16 +621,14 @@ describe("expense persistence and CSV reconciliation", () => {
     const quarantined = await database.query<{
       reason: string;
       payload: unknown;
-      source_payload_id: number;
     }>(
-      "SELECT reason, payload, source_payload_id::int FROM despesa_conflicts ORDER BY id",
+      "SELECT reason, payload FROM despesa_conflicts ORDER BY id",
     );
-    expect(quarantined.rows).toHaveLength(2);
+    expect(quarantined.rows).toHaveLength(1);
     for (const row of quarantined.rows) {
       expect(row).toMatchObject({
         reason: "missing_document_code",
         payload: { ...invalid, deputadoId: 218086, legislaturaId: 57 },
-        source_payload_id: expect.any(Number),
       });
     }
   });
@@ -527,10 +655,7 @@ describe("expense persistence and CSV reconciliation", () => {
       218086,
       57,
     );
-    const raw = await database.query<{ id: number }>(
-      "SELECT id FROM raw_payloads LIMIT 1",
-    );
-    await repository.upsertMany([expense], raw.rows[0]!.id);
+    await repository.upsertMany([expense]);
     await repository.importBilhetesCsv([
       ticket,
       { ...ticket, codDocumento: "", linha: ticket.linha + 1 },
@@ -538,23 +663,18 @@ describe("expense persistence and CSV reconciliation", () => {
     expect(await repository.enrichFromBilhetesCsv()).toEqual({
       enriched: 1,
       ambiguous: 0,
+      removed: 1,
     });
     const rows = await database.query(
-      "SELECT cod_documento, status FROM bilhetes_aereos_csv ORDER BY id",
+      "SELECT cod_documento FROM bilhetes_aereos_csv ORDER BY id",
     );
-    expect(rows.rows).toEqual([
-      { cod_documento: ticket.codDocumento, status: "associated" },
-      { cod_documento: "", status: "available" },
-    ]);
+    expect(rows.rows).toEqual([{ cod_documento: "" }]);
   });
 
   it("rolls back quarantine and propagates database failures", async () => {
     const db = drizzle(database, { schema });
     const repository = new DrizzleDespesaRepository(db);
     const expense = mapDespesa(fixtureExpenseDto(), 218086, 57);
-    const raw = await database.query<{ id: number }>(
-      "SELECT id FROM raw_payloads LIMIT 1",
-    );
     await database.exec(`
       CREATE FUNCTION reject_expense() RETURNS trigger AS $$
       BEGIN RAISE EXCEPTION 'fixture database failure'; END;
@@ -569,7 +689,6 @@ describe("expense persistence and CSV reconciliation", () => {
           { ...expense, nomeFornecedor: "Conflicting supplier" },
           { ...expense, numDocumento: "valid" },
         ],
-        raw.rows[0]!.id,
       ),
     ).rejects.toThrow();
     const counts = await database.query<{
@@ -622,9 +741,6 @@ describe("expense persistence and CSV reconciliation", () => {
     const repository = new DrizzleDespesaRepository(
       drizzle(database, { schema }),
     );
-    const rawPayload = await database.query<{ id: number }>(
-      "SELECT id FROM raw_payloads WHERE request_key = 'fixture'",
-    );
     const expense = mapDespesa(
       {
         ano: 2025,
@@ -648,28 +764,24 @@ describe("expense persistence and CSV reconciliation", () => {
       218086,
       57,
     );
-    await repository.upsertMany([expense], rawPayload.rows[0]!.id);
+    await repository.upsertMany([expense]);
     await repository.importBilhetesCsv([{ ...csvTicket(""), passageiro: "" }]);
 
     await expect(repository.enrichFromBilhetesCsv()).resolves.toEqual({
       enriched: 0,
       ambiguous: 0,
+      removed: 0,
     });
     const rows = await database.query<{
-      status: string;
-      associated_expense_id: string | null;
       passageiro: string | null;
       trecho: string | null;
     }>(
-      `SELECT b.status, b.associated_expense_id::text,
-              d.passageiro, d.trecho
+      `SELECT d.passageiro, d.trecho
        FROM bilhetes_aereos_csv b
        JOIN despesas d ON d.id = 1`,
     );
     expect(rows.rows).toEqual([
       {
-        status: "available",
-        associated_expense_id: null,
         passageiro: null,
         trecho: null,
       },
@@ -680,9 +792,6 @@ describe("expense persistence and CSV reconciliation", () => {
     const repository = new DrizzleDespesaRepository(
       drizzle(database, { schema }),
     );
-    const rawPayload = await database.query<{ id: number }>(
-      "SELECT id FROM raw_payloads WHERE request_key = 'fixture'",
-    );
     const expense = mapDespesa(
       {
         ano: 2025,
@@ -706,16 +815,18 @@ describe("expense persistence and CSV reconciliation", () => {
       218086,
       57,
     );
-    await repository.upsertMany([expense], rawPayload.rows[0]!.id);
+    await repository.upsertMany([expense]);
     await repository.importBilhetesCsv([csvTicket("BSB/CGH")]);
 
     await expect(repository.enrichFromBilhetesCsv(2024)).resolves.toEqual({
       enriched: 0,
       ambiguous: 0,
+      removed: 0,
     });
     await expect(repository.enrichFromBilhetesCsv(2025)).resolves.toEqual({
       enriched: 1,
       ambiguous: 0,
+      removed: 1,
     });
   });
 });
@@ -779,4 +890,21 @@ function fixtureExpenseDto(): DespesaDto {
     valorLiquido: 235.8,
     urlDocumento: null,
   };
+}
+
+function expenseForTicket(ticket: BilheteAereoCsv) {
+  return mapDespesa(
+    {
+      ...fixtureExpenseDto(),
+      ...ticket,
+      tipoDocumento: "Nota Fiscal",
+      numRessarcimento: "0",
+      valorGlosa: 0,
+      valorLiquido: ticket.valorDocumento,
+      nomeFornecedor: "AZUL",
+      urlDocumento: null,
+    },
+    218086,
+    57,
+  );
 }

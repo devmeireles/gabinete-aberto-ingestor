@@ -14,8 +14,6 @@ export interface PreparedDeputadoHistorico {
   readonly deputadoId: number;
   readonly legislaturaId: number;
   readonly vigencias: readonly DeputadoPartidoVigencia[];
-  readonly requestKey: string;
-  readonly rawBody: unknown;
 }
 
 export interface PreparedDeputadosPage {
@@ -26,7 +24,6 @@ export interface PreparedDeputadosPage {
   readonly deputados: readonly MappedDeputado[];
   readonly deputadoIds: readonly number[];
   readonly requestKey: string;
-  readonly rawBody: unknown;
   readonly historicos: readonly PreparedDeputadoHistorico[];
 }
 
@@ -73,8 +70,6 @@ export class PrepareDeputadosPage {
               historyPage.items,
               knownPartidos,
             ),
-            requestKey: historyPage.requestKey,
-            rawBody: historyPage.rawBody,
           };
           completed++;
           onHistoryProgress?.({
@@ -105,7 +100,6 @@ export class PrepareDeputadosPage {
       deputados: normalized.items,
       deputadoIds: normalized.deputadoIds,
       requestKey: page.requestKey,
-      rawBody: page.rawBody,
       historicos,
     };
   }

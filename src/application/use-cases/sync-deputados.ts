@@ -1,5 +1,4 @@
 import type { DeputadoRepository } from "@/application/ports/deputado-repository";
-import type { RawPayloadStore } from "@/application/ports/raw-payload-store";
 import type { UpsertResult } from "@/application/ports/legislatura-repository";
 import type {
   DeputadoHistoryProgress,
@@ -21,7 +20,6 @@ export interface SyncDeputadosPageResult {
 export class SyncDeputados {
   constructor(
     private readonly preparePage: PrepareDeputadosPage,
-    private readonly rawStore: RawPayloadStore,
     private readonly repository: DeputadoRepository,
   ) {}
 
@@ -39,25 +37,10 @@ export class SyncDeputados {
       previouslySeen,
       onHistoryProgress,
     );
-    const sourcePayloadId: number = await this.rawStore.save(
-      prepared.requestKey,
-      prepared.rawBody,
-    );
-    const historicos = await Promise.all(
-      prepared.historicos.map(async (history) => ({
-        deputadoId: history.deputadoId,
-        legislaturaId: history.legislaturaId,
-        vigencias: history.vigencias,
-        sourcePayloadId: await this.rawStore.save(
-          history.requestKey,
-          history.rawBody,
-        ),
-      })),
-    );
+    const historicos = prepared.historicos;
     const result: UpsertResult = await this.repository.syncPage({
       deputados: prepared.deputados.map((item) => item.deputado),
       legislaturas: prepared.deputados.map((item) => item.legislatura),
-      sourcePayloadId,
       historicos,
     });
 

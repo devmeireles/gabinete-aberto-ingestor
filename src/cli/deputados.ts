@@ -17,7 +17,6 @@ import { RequestScheduler } from "@/infrastructure/camara/request-scheduler";
 import { createDatabase } from "@/infrastructure/persistence/client";
 import { DrizzleDeputadoRepository } from "@/infrastructure/persistence/drizzle-deputado-repository";
 import { DrizzlePartidoRepository } from "@/infrastructure/persistence/drizzle-partido-repository";
-import { DrizzleRawPayloadStore } from "@/infrastructure/persistence/drizzle-raw-payload-store";
 import type { DatabaseHandle } from "@/infrastructure/persistence/client";
 import { loadCamaraEnv } from "@/config/env";
 import { eq } from "drizzle-orm";
@@ -173,22 +172,14 @@ export async function runDeputados(args: readonly string[]): Promise<void> {
       throw new Error("DATABASE_URL é obrigatória para usar --persist");
     }
     database = createDatabase(databaseUrl);
-    const rawStore: DrizzleRawPayloadStore = new DrizzleRawPayloadStore(
-      database.db,
-    );
     syncPartidos = new SyncPartidos(
       gateway,
-      rawStore,
       new DrizzlePartidoRepository(database.db),
     );
     const deputadoRepository: DrizzleDeputadoRepository =
       new DrizzleDeputadoRepository(database.db);
-    sync = new SyncDeputados(
-      prepareDeputadosPage,
-      rawStore,
-      deputadoRepository,
-    );
-    enrichDeputado = new EnrichDeputado(gateway, rawStore, deputadoRepository);
+    sync = new SyncDeputados(prepareDeputadosPage, deputadoRepository);
+    enrichDeputado = new EnrichDeputado(gateway, deputadoRepository);
   }
 
   try {

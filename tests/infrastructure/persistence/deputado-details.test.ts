@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -7,13 +8,13 @@ describe("deputado details migration", () => {
 
   beforeEach(async () => {
     database = new PGlite();
-    await executeMigration(database, "0000_init_raw_and_phase1.sql");
-    await executeMigration(database, "0007_deputado_details.sql");
-    await executeMigration(database, "0008_deputado_status_snapshot.sql");
-    await executeMigration(database, "0011_deputy_profile_last_fetched.sql");
+    const migrationsDir = new URL("../../../drizzle/", import.meta.url);
+    for (const filename of (await readdir(migrationsDir))
+      .filter((name) => name.endsWith(".sql"))
+      .sort()) {
+      await executeMigration(database, filename);
+    }
     await database.exec(`
-      INSERT INTO raw_payloads (request_key, content_hash, payload)
-      VALUES ('deputados/218086', repeat('a', 64), '{"dados": {}}');
       INSERT INTO legislaturas (id, uri, data_inicio, data_fim, row_hash)
       VALUES (
         57,
@@ -41,13 +42,13 @@ describe("deputado details migration", () => {
       INSERT INTO deputado_detalhes (
         deputado_id, nome_civil, cpf, redes_sociais, status_legislatura_id,
         status_nome, status_uri, nome_eleitoral, situacao, row_hash,
-        source_payload_id, last_fetched_at
+        last_fetched_at
       ) VALUES (
         218086, 'ELIANE DE SOUSA ALVES', '16810770860',
         '["https://instagram.com/deputadafederal_elysantos"]', 57,
         'Ely Santos',
         'https://dadosabertos.camara.leg.br/api/v2/deputados/218086',
-        'Ely Santos', 'Suplência', repeat('d', 64), 1, now()
+        'Ely Santos', 'Suplência', repeat('d', 64), now()
       );
     `);
 
@@ -72,15 +73,14 @@ describe("deputado details migration", () => {
     ]);
   });
 
-  it("enforces references to the deputy, legislature, and raw payload", async () => {
+  it("enforces references to the deputy and legislature", async () => {
     await expect(
       database.exec(`
         INSERT INTO deputado_detalhes (
-          deputado_id, status_legislatura_id, status_uri, row_hash,
-          source_payload_id
+          deputado_id, status_legislatura_id, status_uri, row_hash
         ) VALUES (
           999, 57, 'https://dadosabertos.camara.leg.br/api/v2/deputados/999',
-          repeat('e', 64), 1
+          repeat('e', 64)
         )
       `),
     ).rejects.toThrow();

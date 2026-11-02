@@ -21,37 +21,6 @@ import { sql } from "drizzle-orm";
 import type { Despesa } from "@/domain/model/despesa";
 import type { RejectedDespesaPayload } from "@/application/ports/despesa-repository";
 
-/**
- * CAMADA RAW
- *
- * Guarda o JSON bruto exatamente como a API devolveu. Por quê: auditoria
- * (veracidade) e reprocessamento sem bater na API de novo.
- *
- * Dedupe por (request_key, content_hash): se a resposta não mudou, só
- * atualizamos `last_seen_at`. Se mudou, nasce uma nova linha, e o histórico
- * de alterações da fonte fica preservado.
- */
-export const rawPayloads = pgTable(
-  "raw_payloads",
-  {
-    id: bigserial("id", { mode: "number" }).primaryKey(),
-    /** Endpoint + query canônica ordenada, ex.: "deputados?idLegislatura=57&pagina=1" */
-    requestKey: text("request_key").notNull(),
-    /** SHA-256 hex do corpo canônico. */
-    contentHash: char("content_hash", { length: 64 }).notNull(),
-    payload: jsonb("payload").notNull(),
-    firstFetchedAt: timestamp("first_fetched_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (t) => [
-    uniqueIndex("raw_payloads_key_hash_uq").on(t.requestKey, t.contentHash),
-  ],
-);
-
 export const crawlerRuns = pgTable(
   "crawler_runs",
   {
@@ -82,9 +51,7 @@ export const crawlerRuns = pgTable(
 /**
  * CAMADA NORMALIZADA
  *
- * Toda linha carrega:
- *  - row_hash: hash dos campos de negócio. O upsert só escreve se mudou.
- *  - source_payload_id: de qual resposta bruta veio (rastreabilidade).
+ * Toda linha carrega `row_hash`, o hash dos campos de negócio usado pelo upsert.
  */
 
 export const legislaturas = pgTable("legislaturas", {
@@ -95,9 +62,6 @@ export const legislaturas = pgTable("legislaturas", {
   dataFim: date("data_fim", { mode: "string" }),
   legislaturaAtual: boolean("legislatura_atual").notNull().default(false),
   rowHash: char("row_hash", { length: 64 }).notNull(),
-  sourcePayloadId: bigint("source_payload_id", { mode: "number" }).references(
-    () => rawPayloads.id,
-  ),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -115,9 +79,6 @@ export const partidos = pgTable(
     nome: text("nome").notNull(),
     uri: text("uri").notNull(),
     rowHash: char("row_hash", { length: 64 }).notNull(),
-    sourcePayloadId: bigint("source_payload_id", { mode: "number" }).references(
-      () => rawPayloads.id,
-    ),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -135,9 +96,6 @@ export const partidoLegislaturas = pgTable(
       .notNull()
       .references(() => legislaturas.id),
     rowHash: char("row_hash", { length: 64 }).notNull(),
-    sourcePayloadId: bigint("source_payload_id", { mode: "number" }).references(
-      () => rawPayloads.id,
-    ),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -171,9 +129,6 @@ export const partidoDetalhes = pgTable(
     urlWebSite: text("url_website"),
     urlFacebook: text("url_facebook"),
     rowHash: char("row_hash", { length: 64 }).notNull(),
-    sourcePayloadId: bigint("source_payload_id", { mode: "number" })
-      .notNull()
-      .references(() => rawPayloads.id),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -193,9 +148,6 @@ export const deputados = pgTable("deputados", {
   uri: text("uri").notNull(),
   urlFoto: text("url_foto"),
   rowHash: char("row_hash", { length: 64 }).notNull(),
-  sourcePayloadId: bigint("source_payload_id", { mode: "number" }).references(
-    () => rawPayloads.id,
-  ),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -242,9 +194,6 @@ export const deputadoDetalhes = pgTable(
     gabineteTelefone: text("gabinete_telefone"),
     gabineteEmail: text("gabinete_email"),
     rowHash: char("row_hash", { length: 64 }).notNull(),
-    sourcePayloadId: bigint("source_payload_id", { mode: "number" })
-      .notNull()
-      .references(() => rawPayloads.id),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -273,9 +222,6 @@ export const deputadoLegislaturas = pgTable(
     siglaUf: char("sigla_uf", { length: 2 }),
     email: text("email"),
     rowHash: char("row_hash", { length: 64 }).notNull(),
-    sourcePayloadId: bigint("source_payload_id", { mode: "number" }).references(
-      () => rawPayloads.id,
-    ),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -301,9 +247,6 @@ export const deputadoPartidoVigencias = pgTable(
     }),
     dataFim: timestamp("data_fim", { withTimezone: false, mode: "string" }),
     rowHash: char("row_hash", { length: 64 }).notNull(),
-    sourcePayloadId: bigint("source_payload_id", { mode: "number" }).references(
-      () => rawPayloads.id,
-    ),
   },
   (t) => [
     foreignKey({
@@ -405,9 +348,6 @@ export const despesas = pgTable(
       .notNull()
       .default(false),
     rowHash: char("row_hash", { length: 64 }).notNull(),
-    sourcePayloadId: bigint("source_payload_id", { mode: "number" }).references(
-      () => rawPayloads.id,
-    ),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -448,9 +388,6 @@ export const despesaConflicts = pgTable(
   "despesa_conflicts",
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
-    sourcePayloadId: bigint("source_payload_id", { mode: "number" })
-      .notNull()
-      .references(() => rawPayloads.id),
     naturalKey: text("natural_key").notNull(),
     rowHash: char("row_hash", { length: 64 }).notNull(),
     payload: jsonb("payload")
@@ -462,8 +399,8 @@ export const despesaConflicts = pgTable(
       .defaultNow(),
   },
   (t) => [
-    uniqueIndex("despesa_conflicts_source_hash_uq").on(
-      t.sourcePayloadId,
+    uniqueIndex("despesa_conflicts_natural_key_hash_uq").on(
+      t.naturalKey,
       t.rowHash,
     ),
   ],
@@ -497,18 +434,8 @@ export const bilhetesAereosCsv = pgTable(
     trecho: text("trecho").notNull(),
     arquivo: text("arquivo").notNull(),
     linha: integer("linha").notNull(),
-    status: text("status", { enum: ["available", "associated"] })
-      .notNull()
-      .default("available"),
-    associatedExpenseId: bigint("associated_expense_id", {
-      mode: "number",
-    }).references(() => despesas.id),
   },
   (t) => [
-    check(
-      "bilhetes_aereos_csv_association_status_chk",
-      sql`(${t.status} = 'available' AND ${t.associatedExpenseId} IS NULL) OR (${t.status} = 'associated' AND ${t.associatedExpenseId} IS NOT NULL)`,
-    ),
     uniqueIndex("bilhetes_aereos_csv_identity_uq").on(
       t.deputadoId,
       t.legislaturaId,
@@ -534,9 +461,6 @@ export const bilhetesAereosCsv = pgTable(
       t.dataDocumento,
       t.numDocumento,
     ),
-    index("bilhetes_aereos_csv_status_year_idx").on(t.status, t.ano),
-    index("bilhetes_aereos_csv_associated_expense_idx").on(
-      t.associatedExpenseId,
-    ),
+    index("bilhetes_aereos_csv_year_idx").on(t.ano),
   ],
 );

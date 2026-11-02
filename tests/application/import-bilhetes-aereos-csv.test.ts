@@ -22,7 +22,7 @@ describe("ImportBilhetesAereosCsv", () => {
     directory = await mkdtemp(join(tmpdir(), "camara-expense-csv-"));
     const filePath = join(directory, "Ano-2025.csv");
     const header =
-      '"txtDescricao";"indTipoDocumento";"nuDeputadoId";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento";"txtPassageiro";"txtTrecho"\n';
+      '"txtDescricao";"indTipoDocumento";"ideCadastro";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento";"txtPassageiro";"txtTrecho"\n';
     const rows =
       '"PASSAGEM AÉREA - SIGEPA";"0";"218086";"57";"2025";"4";"302323";"2025-04-08T12:00:00";"BFBWSI";"0";"0";"092.962.950/0016-0";"-391.23";"Eliane; de Sousa Alves";"BSB/CGH"\n' +
       '"PASSAGEM AÉREA - RPA";"0";"218086";"57";"2025";"4";"302324";"2025-04-08T12:00:00";"BFBWSJ";"0";"0";"092.962.950/0016-0";"391.23";"Eliane de Sousa Alves";"BSB/CGH"\n' +
@@ -41,12 +41,22 @@ describe("ImportBilhetesAereosCsv", () => {
         conflicted: 0,
         enriched: 0,
         ambiguous: 0,
+        removed: 0,
       }),
       importBilhetesCsv: async (items) => {
         imported = [...imported, ...items];
-        return { imported: items.length, enriched: 0, ambiguous: 0 };
+        return {
+          imported: items.length,
+          enriched: 0,
+          ambiguous: 0,
+          removed: 0,
+        };
       },
-      enrichFromBilhetesCsv: async () => ({ enriched: 1, ambiguous: 0 }),
+      enrichFromBilhetesCsv: async () => ({
+        enriched: 1,
+        ambiguous: 0,
+        removed: 0,
+      }),
     };
 
     const result = await new ImportBilhetesAereosCsv(
@@ -57,9 +67,12 @@ describe("ImportBilhetesAereosCsv", () => {
     expect(result).toEqual({
       scanned: 5,
       candidates: 4,
+      skipped: 0,
+      skippedSamples: [],
       imported: 4,
       enriched: 1,
       ambiguous: 0,
+      removed: 0,
     });
     expect(imported[0]).toMatchObject({
       deputadoId: 218086,
@@ -82,7 +95,7 @@ describe("ImportBilhetesAereosCsv", () => {
 
   it("retains official-mission CSV rows with an empty document code and continues streaming", async () => {
     const csv =
-      '"txtDescricao";"indTipoDocumento";"nuDeputadoId";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento";"txtPassageiro";"txtTrecho"\n' +
+      '"txtDescricao";"indTipoDocumento";"ideCadastro";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento";"txtPassageiro";"txtTrecho"\n' +
       '"PASSAGEM AÉREA - MISSÃO OFICIAL";"0";"218086";"57";"2025";"4";"";"2025-04-08T12:00:00";"BFBWSL";"0";"0";"092.962.950/0016-0";"391.23";"Passenger";"BSB/CGH"\n' +
       '"PASSAGEM AÉREA - MISSÃO OFICIAL";"0";"218086";"57";"2025";"4";"302326";"2025-04-08T12:00:00";"BFBWSM";"0";"0";"092.962.950/0016-0";"391.23";"Passenger";"CGH/BSB"\n';
     const items = [];
@@ -103,11 +116,26 @@ describe("ImportBilhetesAereosCsv", () => {
     });
   });
 
+  it("uses the API identifier rather than the internal CEAP ID", async () => {
+    const header =
+      '"txtDescricao";"indTipoDocumento";"ideCadastro";"nuDeputadoId";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento"\n';
+    const row =
+      '"PASSAGEM AÉREA - SIGEPA";"0";"218086";"1234";"57";"2025";"4";"302323";"2025-04-08T12:00:00";"BFBWSI";"0";"0";"09296295000160";"-391.23"\n';
+    const rows = [];
+    for await (const item of new StreamingBilheteAereoCsvSource().readStream(
+      "fixture.csv",
+      Readable.from([Buffer.from(header + row)]),
+    ))
+      rows.push(item);
+    expect(rows[0]?.deputadoId).toBe(218086);
+    expect(rows).toHaveLength(1);
+  });
+
   it("previews CSV candidates without requiring or calling a repository", async () => {
     directory = await mkdtemp(join(tmpdir(), "camara-expense-csv-preview-"));
     const filePath = join(directory, "Ano-2025.csv");
     const header =
-      '"txtDescricao";"indTipoDocumento";"nuDeputadoId";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento";"txtPassageiro";"txtTrecho"\n';
+      '"txtDescricao";"indTipoDocumento";"ideCadastro";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento";"txtPassageiro";"txtTrecho"\n';
     const row =
       '"PASSAGEM AÉREA - SIGEPA";"0";"218086";"57";"2025";"4";"302323";"2025-04-08T12:00:00";"BFBWSI";"0";"0";"092.962.950/0016-0";"-391.23";"Eliane de Sousa Alves";"BSB/CGH"\n';
     await writeFile(filePath, `${header}${row}`, "utf8");
@@ -119,6 +147,8 @@ describe("ImportBilhetesAereosCsv", () => {
     expect(result).toMatchObject({
       scanned: 1,
       candidates: 1,
+      skipped: 0,
+      skippedSamples: [],
       sample: {
         deputadoId: 218086,
         codDocumento: "302323",
@@ -131,7 +161,7 @@ describe("ImportBilhetesAereosCsv", () => {
 
   it("imports candidates when passenger and route columns are absent", async () => {
     const csv =
-      '"txtDescricao";"indTipoDocumento";"nuDeputadoId";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento"\n' +
+      '"txtDescricao";"indTipoDocumento";"ideCadastro";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento"\n' +
       '"PASSAGEM AÉREA - SIGEPA";"0";"218086";"57";"2025";"4";"302323";"2025-04-08T12:00:00";"BFBWSI";"0";"0";"092.962.950/0016-0";"-391.23"\n';
     const imported: BilheteAereoCsv[] = [];
     const repository: DespesaRepository = {
@@ -143,12 +173,22 @@ describe("ImportBilhetesAereosCsv", () => {
         conflicted: 0,
         enriched: 0,
         ambiguous: 0,
+        removed: 0,
       }),
       importBilhetesCsv: async (items) => {
         imported.push(...items);
-        return { imported: items.length, enriched: 0, ambiguous: 0 };
+        return {
+          imported: items.length,
+          enriched: 0,
+          ambiguous: 0,
+          removed: 0,
+        };
       },
-      enrichFromBilhetesCsv: async () => ({ enriched: 0, ambiguous: 0 }),
+      enrichFromBilhetesCsv: async () => ({
+        enriched: 0,
+        ambiguous: 0,
+        removed: 0,
+      }),
     };
 
     await new ImportBilhetesAereosCsv(
@@ -160,9 +200,61 @@ describe("ImportBilhetesAereosCsv", () => {
     expect(imported[0]).toMatchObject({ passageiro: "", trecho: "" });
   });
 
+  it("skips invalid ticket rows, reports them, and continues importing", async () => {
+    const header =
+      '"txtDescricao";"indTipoDocumento";"ideCadastro";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento"\n';
+    const csv =
+      header +
+      '"PASSAGEM AÉREA - SIGEPA";"0";"218086";"57";"2025";"4";"invalid";"2025-04-08T12:00:00";"BAD";"0";"";"09296295000160";"100.00"\n' +
+      '"PASSAGEM AÉREA - SIGEPA";"0";"218086";"57";"2025";"4";"valid";"2025-04-08T12:00:00";"GOOD";"0";"0";"09296295000160";"100.00"\n';
+    const imported: BilheteAereoCsv[] = [];
+    const repository: DespesaRepository = {
+      getActiveLegislaturaId: async () => 57,
+      listDeputadoIds: async () => [218086],
+      upsertMany: async () => ({
+        written: 0,
+        unchanged: 0,
+        conflicted: 0,
+        enriched: 0,
+        ambiguous: 0,
+        removed: 0,
+      }),
+      importBilhetesCsv: async (items) => {
+        imported.push(...items);
+        return {
+          imported: items.length,
+          enriched: 0,
+          ambiguous: 0,
+          removed: 0,
+        };
+      },
+      enrichFromBilhetesCsv: async () => ({
+        enriched: 0,
+        ambiguous: 0,
+        removed: 0,
+      }),
+    };
+
+    const result = await new ImportBilhetesAereosCsv(
+      new StreamingBilheteAereoCsvSource(),
+      repository,
+    ).importStream("Ano-2025.csv", Readable.from([Buffer.from(csv)]));
+
+    expect(result).toMatchObject({
+      scanned: 2,
+      candidates: 1,
+      skipped: 1,
+      skippedSamples: [
+        { line: 2, reason: "Registro 2: campo numLote ausente" },
+      ],
+      imported: 1,
+    });
+    expect(imported.map(({ codDocumento }) => codDocumento)).toEqual(["valid"]);
+  });
+
   it("imports a decompressed stream without reconciling until requested", async () => {
     const csv =
-      '"txtDescricao";"indTipoDocumento";"nuDeputadoId";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento";"txtPassageiro";"txtTrecho"\n' +
+      '"txtDescricao";"indTipoDocumento";"ideCadastro";"codLegislatura";"numAno";"numMes";"ideDocumento";"datEmissao";"txtNumero";"numParcela";"numLote";"txtCNPJCPF";"vlrDocumento";"txtPassageiro";"txtTrecho"\n' +
       '"PASSAGEM AÉREA - SIGEPA";"0";"218086";"57";"2025";"4";"302323";"2025-04-08T12:00:00";"BFBWSI";"0";"0";"092.962.950/0016-0";"-391.23";"Eliane de Sousa Alves";"BSB/CGH"\n';
     const batches: BilheteAereoCsv[][] = [];
     let reconciliations: number = 0;
@@ -175,14 +267,20 @@ describe("ImportBilhetesAereosCsv", () => {
         conflicted: 0,
         enriched: 0,
         ambiguous: 0,
+        removed: 0,
       }),
       importBilhetesCsv: async (items) => {
         batches.push([...items]);
-        return { imported: items.length, enriched: 0, ambiguous: 0 };
+        return {
+          imported: items.length,
+          enriched: 0,
+          ambiguous: 0,
+          removed: 0,
+        };
       },
       enrichFromBilhetesCsv: async () => {
         reconciliations++;
-        return { enriched: 1, ambiguous: 0 };
+        return { enriched: 1, ambiguous: 0, removed: 0 };
       },
     };
 
@@ -198,15 +296,19 @@ describe("ImportBilhetesAereosCsv", () => {
     expect(result).toEqual({
       scanned: 1,
       candidates: 1,
+      skipped: 0,
+      skippedSamples: [],
       imported: 1,
       enriched: 0,
       ambiguous: 0,
+      removed: 0,
     });
     expect(batches).toHaveLength(1);
     expect(reconciliations).toBe(0);
     await expect(importer.reconcile()).resolves.toEqual({
       enriched: 1,
       ambiguous: 0,
+      removed: 0,
     });
     expect(reconciliations).toBe(1);
   });

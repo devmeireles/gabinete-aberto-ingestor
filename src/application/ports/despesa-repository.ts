@@ -15,12 +15,14 @@ export interface RejectedDespesa {
 
 export interface CsvEnrichmentResult {
   readonly imported: number;
+  readonly removed: number;
   readonly enriched: number;
   readonly ambiguous: number;
 }
 
 export interface DespesaSyncResult extends UpsertResult {
   readonly conflicted: number;
+  readonly removed: number;
   readonly enriched: number;
   readonly ambiguous: number;
 }
@@ -30,7 +32,6 @@ export interface DespesaRepository {
   listDeputadoIds(legislaturaId: number): Promise<readonly number[]>;
   upsertMany(
     items: readonly Despesa[],
-    sourcePayloadId: number,
     rejectedItems?: readonly RejectedDespesa[],
   ): Promise<DespesaSyncResult>;
   importBilhetesCsv(

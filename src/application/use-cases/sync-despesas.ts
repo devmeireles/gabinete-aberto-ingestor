@@ -5,7 +5,6 @@ import type {
 } from "@/application/ports/camara-gateway/despesas";
 import type { Page } from "@/application/ports/camara-gateway/page";
 import type { DespesaRepository } from "@/application/ports/despesa-repository";
-import type { RawPayloadStore } from "@/application/ports/raw-payload-store";
 
 const MAX_PAGES_PER_MONTH: number = 500;
 
@@ -17,6 +16,7 @@ export interface SyncDespesasPageResult {
   readonly unchanged: number;
   readonly enriched: number;
   readonly ambiguous: number;
+  readonly removed: number;
   readonly conflicted: number;
 }
 
@@ -27,13 +27,13 @@ export interface SyncDespesasMonthResult {
   readonly unchanged: number;
   readonly enriched: number;
   readonly ambiguous: number;
+  readonly removed: number;
   readonly conflicted: number;
 }
 
 export class SyncDespesas {
   constructor(
     private readonly gateway: DespesaGateway,
-    private readonly rawStore: RawPayloadStore,
     private readonly repository: DespesaRepository,
   ) {}
 
@@ -60,10 +60,6 @@ export class SyncDespesas {
       pagina,
       ordem: "DESC",
     });
-    const sourcePayloadId: number = await this.rawStore.save(
-      page.requestKey,
-      page.rawBody,
-    );
     const { expenses, rejectedItems } = prepareDespesasPage(
       page.items,
       deputadoId,
@@ -71,11 +67,7 @@ export class SyncDespesas {
       ano,
       mes,
     );
-    const result = await this.repository.upsertMany(
-      expenses,
-      sourcePayloadId,
-      rejectedItems,
-    );
+    const result = await this.repository.upsertMany(expenses, rejectedItems);
     return {
       page: page.page,
       hasNext: page.hasNext,
@@ -84,6 +76,7 @@ export class SyncDespesas {
       unchanged: result.unchanged,
       enriched: result.enriched,
       ambiguous: result.ambiguous,
+      removed: result.removed,
       conflicted: result.conflicted,
     };
   }
@@ -100,6 +93,7 @@ export class SyncDespesas {
     let unchanged: number = 0;
     let enriched: number = 0;
     let ambiguous: number = 0;
+    let removed = 0;
     let conflicted: number = 0;
     let hasNext: boolean;
 
@@ -116,6 +110,7 @@ export class SyncDespesas {
       unchanged += result.unchanged;
       enriched += result.enriched;
       ambiguous += result.ambiguous;
+      removed += result.removed ?? 0;
       conflicted += result.conflicted;
       hasNext = result.hasNext;
       pagina++;
@@ -133,6 +128,7 @@ export class SyncDespesas {
       unchanged,
       enriched,
       ambiguous,
+      removed,
       conflicted,
     };
   }

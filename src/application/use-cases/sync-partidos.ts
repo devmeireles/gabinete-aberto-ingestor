@@ -5,7 +5,6 @@ import type {
 import type { Page } from "@/application/ports/camara-gateway/page";
 import type { PartidoRepository } from "@/application/ports/partido-repository";
 import type { UpsertResult } from "@/application/ports/legislatura-repository";
-import type { RawPayloadStore } from "@/application/ports/raw-payload-store";
 import { mapPartido } from "@/application/mappers/partido-mapper";
 import type { Partido, PartidoLegislatura } from "@/domain/model/partido";
 
@@ -21,7 +20,6 @@ export interface SyncPartidosPageResult {
 export class SyncPartidos {
   constructor(
     private readonly gateway: PartidoGateway,
-    private readonly rawStore: RawPayloadStore,
     private readonly repository: PartidoRepository,
   ) {}
 
@@ -33,10 +31,6 @@ export class SyncPartidos {
       idLegislatura: legislaturaId,
       pagina,
     });
-    const payloadId: number = await this.rawStore.save(
-      page.requestKey,
-      page.rawBody,
-    );
     const mapped = page.items.map((dto: PartidoDto) =>
       mapPartido(dto, legislaturaId),
     );
@@ -47,7 +41,6 @@ export class SyncPartidos {
     const result: UpsertResult = await this.repository.upsertMany(
       partidos,
       memberships,
-      payloadId,
     );
 
     return {

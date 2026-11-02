@@ -18,7 +18,6 @@ import {
   type DatabaseHandle,
 } from "@/infrastructure/persistence/client";
 import { DrizzleDespesaRepository } from "@/infrastructure/persistence/drizzle-despesa-repository";
-import { DrizzleRawPayloadStore } from "@/infrastructure/persistence/drizzle-raw-payload-store";
 
 const MAX_PAGES: number = 500;
 const MAX_MONTHS: number = 120;
@@ -224,11 +223,7 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
       ),
     );
     if (repository !== undefined && database !== undefined) {
-      sync = new SyncDespesas(
-        gateway,
-        new DrizzleRawPayloadStore(database.db),
-        repository,
-      );
+      sync = new SyncDespesas(gateway, repository);
     }
 
     const months: readonly Month[] =
@@ -252,6 +247,7 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
     let unchanged: number = 0;
     let enriched: number = 0;
     let ambiguous: number = 0;
+    let removed = 0;
     let conflicted: number = 0;
     let pages: number = 0;
     let truncated: boolean = false;
@@ -267,6 +263,7 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
           unchanged,
           enriched,
           ambiguous,
+          removed,
           conflicted,
         };
         const runId = `cli-${invocationId}-${deputadoId}-${month.ano}-${month.mes}`;
@@ -287,6 +284,7 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
               unchanged += result.unchanged;
               enriched += result.enriched;
               ambiguous += result.ambiguous;
+              removed += result.removed ?? 0;
               conflicted += result.conflicted;
               hasNext = result.hasNext;
               console.log(
@@ -302,6 +300,7 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
                   unchanged: result.unchanged,
                   enriched: result.enriched,
                   ambiguous: result.ambiguous,
+                  removed: result.removed,
                   conflicted: result.conflicted,
                   hasNext,
                   persist: true,
@@ -375,6 +374,7 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
             unchanged: unchanged - before.unchanged,
             enriched: enriched - before.enriched,
             ambiguous: ambiguous - before.ambiguous,
+            removed: removed - before.removed,
             conflicted: conflicted - before.conflicted,
             truncated,
           };
@@ -422,6 +422,7 @@ export async function runDespesas(args: readonly string[]): Promise<void> {
         unchanged,
         enriched,
         ambiguous,
+        removed,
         conflicted,
         truncated,
         persist: options.persist,

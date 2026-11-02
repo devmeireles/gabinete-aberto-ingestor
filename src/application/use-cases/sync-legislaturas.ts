@@ -9,7 +9,6 @@ import type {
   LegislaturaRepository,
   UpsertResult,
 } from "@/application/ports/legislatura-repository";
-import type { RawPayloadStore } from "@/application/ports/raw-payload-store";
 
 export interface SyncPageResult {
   readonly page: number;
@@ -26,14 +25,12 @@ export interface SyncPageResult {
  * `step.run` por página. O retorno é pequeno e serializável (exigência do
  * Inngest para memoizar o resultado do step) e traz `hasNext` para o laço.
  *
- * Ordem importa: primeiro guarda o bruto (auditoria), depois normaliza.
- * Se a normalização falhar, o bruto já está salvo e o retry reprocessa sem
- * duplicar nada (tudo é idempotente).
+ * A API é consultada novamente em caso de falha; a persistência normalizada é
+ * idempotente por chave de negócio e hash da linha.
  */
 export class SyncLegislaturas {
   constructor(
     private readonly gateway: LegislaturaGateway,
-    private readonly rawStore: RawPayloadStore,
     private readonly repository: LegislaturaRepository,
   ) {}
 
@@ -45,10 +42,6 @@ export class SyncLegislaturas {
       pagina,
       ...(legislaturaId === undefined ? {} : { id: legislaturaId }),
     });
-    const payloadId: number = await this.rawStore.save(
-      page.requestKey,
-      page.rawBody,
-    );
     if (
       legislaturaId !== undefined &&
       page.items.some((item) => item.id !== legislaturaId)
@@ -61,10 +54,7 @@ export class SyncLegislaturas {
     const entities: Legislatura[] = page.items.map((item) =>
       mapLegislatura(item),
     );
-    const result: UpsertResult = await this.repository.upsertMany(
-      entities,
-      payloadId,
-    );
+    const result: UpsertResult = await this.repository.upsertMany(entities);
 
     return {
       page: page.page,
